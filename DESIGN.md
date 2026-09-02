@@ -65,6 +65,14 @@ D:\AI\DSH\                     ← upstream 源码克隆（保持纯净）
 
 `start-desktop.cmd` 内容：定位本机 electron 可执行并 `electron <desktopDir>`（或直接调 `desktop\node_modules\electron\dist\electron.exe`，若未安装则先 `corepack pnpm install` 于 desktop 目录并提示首次安装较慢）。
 
+## 外壳 UI（已实现，2026-09-02）
+
+- **无系统标题栏**：`titleBarStyle:'hidden'` + `titleBarOverlay`（Window Controls Overlay），去掉 OS 标题文字与图标。
+- **右上角系统原生按钮**：最小化/最大化/关闭，`color:'#ffffff'`（与应用浅色背景一体）、`symbolColor:'#4a4f57'`。
+- **顶部拖拽**：注入 18px 透明 `-webkit-app-region:drag` 条（`#dsh-drag-band`），可拖窗口；交互控件 `no-drag`。
+- 三个可调常量在 `desktop/main.js` 顶部：`OVERLAY_HEIGHT`、`DRAG_HEIGHT`、`titleBarOverlay.color/symbolColor`。
+- 注意：应用为**浅色主题**（白底），配色的目标色是应用 `html/body` 背景（`#ffffff`）；若上游改主题需同步。
+
 ## 已知风险 / 边界
 
 - 国内到 github.com 的 fetch 可能慢/不稳 → 失败静默重试；如用户有代理需配置 git 代理。npm registry 已是 npmmirror。
