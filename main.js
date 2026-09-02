@@ -41,21 +41,33 @@ function injectShellUI() {
   })()`);
 }
 
+const LOADING_HTML = '<html><body style="font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#ffffff;color:#4a4f57">' +
+  '<div style="font-size:20px;font-weight:600">DeepSeek Harness</div>' +
+  '<div style="margin-top:12px;font-size:13px;opacity:.75">正在启动服务…</div></body></html>';
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
     height: 800,
     icon: cfg.icon,
     title: 'DeepSeek Harness',
+    show: false, // 等首帧渲染完成再显示，避免白屏一闪
+    backgroundColor: '#ffffff',
     autoHideMenuBar: true,
     // 隐藏 OS 标题栏（去掉左上角标题/图标），由系统在右上角绘制原生 最小化/最大化/关闭。
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#ffffff', symbolColor: '#4a4f57', height: OVERLAY_HEIGHT },
     webPreferences: { contextIsolation: true },
   });
-  win.on('closed', () => { win = null; }); // 关窗不退出，托盘常驻
+  win.once('ready-to-show', () => { if (win && !win.isDestroyed()) win.show(); });
+  // 点 X 不销毁窗口，改为隐藏到托盘/任务栏；内容保留，恢复即秒显、不再白屏重载。
+  win.on('close', (e) => {
+    if (quitting) return;
+    e.preventDefault();
+    win.hide();
+  });
   win.webContents.on('did-finish-load', injectShellUI);
-  win.loadURL('data:text/html,<html><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#1e1e1e;color:#eee">DeepSeek Harness 启动中…</body></html>');
+  win.loadURL('data:text/html,' + encodeURIComponent(LOADING_HTML));
 }
 
 function ensureNav() { if (win && !win.isDestroyed()) win.loadURL(cfg.url); }
@@ -72,17 +84,24 @@ async function bootServer() {
   }
 }
 
+function showMainWindow() {
+  if (!win || win.isDestroyed()) { createWindow(); return; }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
 function buildTray() {
   tray = new Tray(nativeImage.createFromPath(cfg.icon));
   tray.setToolTip('DeepSeek Harness');
   const menu = Menu.buildFromTemplate([
-    { label: '显示 / 隐藏', click: () => { if (win) { win.isVisible() ? win.hide() : win.show(); } else createWindow(); } },
+    { label: '显示 / 隐藏', click: () => { if (win && win.isVisible()) win.hide(); else showMainWindow(); } },
     { label: '检查更新', click: () => runUpdateCheck(true) },
     { type: 'separator' },
     { label: '退出', click: () => { quitting = true; app.quit(); } },
   ]);
   tray.setContextMenu(menu);
-  tray.on('click', () => { if (win) { win.isVisible() ? win.hide() : win.show(); } });
+  tray.on('click', () => { if (win && win.isVisible()) win.hide(); else showMainWindow(); });
 }
 
 async function runUpdateCheck(manual = false) {
@@ -125,7 +144,7 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+  app.on('second-instance', () => showMainWindow());
   app.setAppUserModelId('com.deepseek.dsh-desktop');
   app.whenReady().then(() => {
     createWindow();
