@@ -41,7 +41,7 @@ function injectShellUI() {
   })()`);
 }
 
-const LOADING_HTML = '<html><body style="font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#ffffff;color:#4a4f57">' +
+const LOADING_HTML = '<html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#ffffff;color:#4a4f57">' +
   '<div style="font-size:20px;font-weight:600">DeepSeek Harness</div>' +
   '<div style="margin-top:12px;font-size:13px;opacity:.75">正在启动服务…</div></body></html>';
 
@@ -67,7 +67,7 @@ function createWindow() {
     win.hide();
   });
   win.webContents.on('did-finish-load', injectShellUI);
-  win.loadURL('data:text/html,' + encodeURIComponent(LOADING_HTML));
+  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(LOADING_HTML));
 }
 
 function ensureNav() { if (win && !win.isDestroyed()) win.loadURL(cfg.url); }
