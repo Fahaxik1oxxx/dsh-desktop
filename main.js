@@ -50,7 +50,7 @@ function createWindow() {
     autoHideMenuBar: true,
     // 隐藏 OS 标题栏（去掉左上角标题/图标），由系统在右上角绘制原生 最小化/最大化/关闭。
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#14171d', symbolColor: '#cfd3da', height: OVERLAY_HEIGHT },
+    titleBarOverlay: { color: '#ffffff', symbolColor: '#4a4f57', height: OVERLAY_HEIGHT },
     webPreferences: { contextIsolation: true },
   });
   win.on('closed', () => { win = null; }); // 关窗不退出，托盘常驻
