@@ -15,9 +15,9 @@ function makeUpdater(cfg, deps = {}) {
   const repo = cfg.repo;
   // runGit: (args) -> {code,stdout,stderr}，真实调用走 git.exe
   const runGit = deps.runGit || ((args) => run(gitExe, args, { cwd: repo, timeoutMs: 900000 }));
-  // runBash: (script) -> {code,stdout,stderr}，真实调用经 bash -c + 显式 PATH
-  const runBash = deps.runBash || ((script) =>
-    run(cfg.bashExe, ['-c', `export PATH="/d/Compile/Node:$PATH"; ${script}`], { cwd: repo, timeoutMs: 1800000 }));
+  // runBash: (script, {timeoutMs}) -> {code,stdout,stderr}，真实调用经 bash -c + 显式 PATH
+  const runBash = deps.runBash || ((script, { timeoutMs = 1800000 } = {}) =>
+    run(cfg.bashExe, ['-c', `export PATH="/d/Compile/Node:$PATH"; ${script}`], { cwd: repo, timeoutMs }));
 
   async function gitOut(args) {
     const r = await runGit(args);
@@ -26,7 +26,7 @@ function makeUpdater(cfg, deps = {}) {
 
   /** fetch 远端并比对本地 HEAD。网络失败返回 reachable:false。 */
   async function checkForUpdate() {
-    const f = await runBash(`git -C "${winToPosix(repo)}" fetch origin master 2>&1`);
+    const f = await runBash(`git -C "${winToPosix(repo)}" fetch origin master 2>&1`, { timeoutMs: 240000 });
     if (f.code !== 0) return { reachable: false, ahead: false, localSha: null, remoteSha: null, error: (f.stderr || f.stdout).slice(0, 400) };
     const localSha = await gitOut(['rev-parse', 'HEAD']);
     const remoteSha = await gitOut(['rev-parse', 'FETCH_HEAD']);
