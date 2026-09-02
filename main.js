@@ -22,6 +22,25 @@ let server = null;
 let updater = null;
 let quitting = false;
 
+// Window Controls Overlay 参数（右上角系统按钮区域的背景色与拖拽条）。
+const OVERLAY_HEIGHT = 36; // 与 titleBarOverlay.height 对应
+const DRAG_HEIGHT = 18;    // 顶部可拖动窗口的透明条高度（避开下方应用可点区域）
+
+function injectShellUI() {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.executeJavaScript(`(() => {
+    if (document.getElementById('dsh-drag-band')) return;
+    const band = document.createElement('div');
+    band.id = 'dsh-drag-band';
+    band.style.cssText = 'position:fixed;top:0;left:0;right:0;height:${DRAG_HEIGHT}px;' +
+      '-webkit-app-region:drag;z-index:2147483646;';
+    document.body.appendChild(band);
+    const css = document.createElement('style');
+    css.textContent = 'button,input,textarea,select,a,[role="button"],[contenteditable="true"]{-webkit-app-region:no-drag}';
+    document.head.appendChild(css);
+  })()`);
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -29,9 +48,13 @@ function createWindow() {
     icon: cfg.icon,
     title: 'DeepSeek Harness',
     autoHideMenuBar: true,
+    // 隐藏 OS 标题栏（去掉左上角标题/图标），由系统在右上角绘制原生 最小化/最大化/关闭。
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#14171d', symbolColor: '#cfd3da', height: OVERLAY_HEIGHT },
     webPreferences: { contextIsolation: true },
   });
   win.on('closed', () => { win = null; }); // 关窗不退出，托盘常驻
+  win.webContents.on('did-finish-load', injectShellUI);
   win.loadURL('data:text/html,<html><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#1e1e1e;color:#eee">DeepSeek Harness 启动中…</body></html>');
 }
 
