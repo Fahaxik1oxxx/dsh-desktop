@@ -11,7 +11,10 @@ const LOG = path.join(__dirname, 'app.log');
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
-  try { fs.appendFileSync(LOG, line + '\n'); } catch { /* 忽略写日志失败 */ }
+  try {
+    try { if (fs.statSync(LOG).size > 1048576) fs.truncateSync(LOG, 0); } catch { /* 日志不存在则直接创建 */ }
+    fs.appendFileSync(LOG, line + '\n');
+  } catch { /* 忽略写日志失败 */ }
   // eslint-disable-next-line no-console
   console.log(line);
 }
@@ -73,7 +76,10 @@ function createWindow() {
 
 function ensureNav() { if (win && !win.isDestroyed()) win.loadURL(cfg.url); }
 
-async function bootServer() {
+const BOOT_RETRIES = 3;
+const BOOT_RETRY_DELAY_MS = 10000;
+
+async function bootServer(attempt = 1) {
   server = startServer(cfg, (line) => log('server: ' + line.trimEnd()));
   try {
     await server.ready;
@@ -81,7 +87,13 @@ async function bootServer() {
     ensureNav();
   } catch (e) {
     log('server failed: ' + e.message);
-    dialog.showErrorBox('DeepSeek Harness 启动失败', e.message);
+    if (quitting) return;
+    if (attempt < BOOT_RETRIES) {
+      log(`retrying boot (${attempt + 1}/${BOOT_RETRIES}) in ${BOOT_RETRY_DELAY_MS / 1000}s`);
+      setTimeout(() => { if (!quitting) bootServer(attempt + 1); }, BOOT_RETRY_DELAY_MS);
+    } else {
+      dialog.showErrorBox('DeepSeek Harness 启动失败', e.message);
+    }
   }
 }
 
@@ -105,39 +117,56 @@ function buildTray() {
   tray.on('click', () => { if (win && win.isVisible()) win.hide(); else showMainWindow(); });
 }
 
+let updateBusy = false;
+
 async function runUpdateCheck(manual = false) {
-  if (!updater) updater = makeUpdater(cfg);
-  let info;
-  try { info = await updater.checkForUpdate(); } catch (e) { log('update check error: ' + e.message); return; }
-  if (!info.reachable) {
-    if (manual) new Notification({ title: '检查更新', body: '无法连接 github.com，稍后再试' }).show();
+  // 检查与更新链不可重入：自动定时、启动首查、托盘手动可能重叠，并发跑 git/pnpm 会互相踩。
+  if (updateBusy) {
+    if (manual) new Notification({ title: '检查更新', body: '已有检查/更新在进行中，请稍候' }).show();
     return;
   }
-  if (!info.ahead) {
-    if (manual) new Notification({ title: '检查更新', body: '已是最新版本 ' + short(info.localSha) }).show();
-    return;
-  }
-  new Notification({ title: '发现新版本', body: `${short(info.localSha)} → ${short(info.remoteSha)}` }).show();
-  const choice = await dialog.showMessageBox({
-    type: 'question',
-    buttons: ['更新', '稍后'],
-    defaultId: 0,
-    cancelId: 1,
-    message: '发现新版本',
-    detail: `本地 ${short(info.localSha)}\n远端 ${short(info.remoteSha)}\n\n确认后将自动 git 拉取 + 重建并重启，界面可能短暂不可用。若工作区有未提交改动会中止更新。`,
-  });
-  if (choice.response !== 0) return;
-  new Notification({ title: '正在更新', body: 'git 拉取 + 完整重建中，请稍候…' }).show();
-  log('apply update start');
-  const r = await updater.applyUpdate((line) => log('update: ' + line));
-  if (r.ok) {
-    log('update done to ' + r.sha);
-    new Notification({ title: '更新完成', body: '已更新到 ' + short(r.sha) + '，正在重启服务…' }).show();
-    if (server) { try { await server.stop(); } catch { /* ignore */ } }
-    await bootServer();
-  } else {
-    log('update failed: ' + (r.reason || '') + ' at ' + (r.at || '?'));
-    dialog.showErrorBox('更新失败', (r.reason || '未知原因') + (r.at ? '\n[阶段：' + r.at + ']' : ''));
+  updateBusy = true;
+  try {
+    if (!updater) updater = makeUpdater(cfg);
+    let info;
+    try { info = await updater.checkForUpdate(); } catch (e) { log('update check error: ' + e.message); return; }
+    if (!info.reachable) {
+      if (manual) new Notification({ title: '检查更新', body: '无法连接 github.com，稍后再试' }).show();
+      return;
+    }
+    if (info.diverged) {
+      log('local history diverged from upstream, skipping');
+      if (manual) new Notification({ title: '检查更新', body: '本地与上游无法快进，需在仓库手动处理' }).show();
+      return;
+    }
+    if (!info.ahead) {
+      if (manual) new Notification({ title: '检查更新', body: '已是最新版本 ' + short(info.localSha) }).show();
+      return;
+    }
+    new Notification({ title: '发现新版本', body: `${short(info.localSha)} → ${short(info.remoteSha)}` }).show();
+    const choice = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['更新', '稍后'],
+      defaultId: 0,
+      cancelId: 1,
+      message: '发现新版本',
+      detail: `本地 ${short(info.localSha)}\n远端 ${short(info.remoteSha)}\n\n确认后将自动 git 拉取 + 重建并重启，界面可能短暂不可用。若工作区有未提交改动会中止更新。`,
+    });
+    if (choice.response !== 0) return;
+    new Notification({ title: '正在更新', body: 'git 拉取 + 完整重建中，请稍候…' }).show();
+    log('apply update start');
+    const r = await updater.applyUpdate((line) => log('update: ' + line));
+    if (r.ok) {
+      log('update done to ' + r.sha);
+      new Notification({ title: '更新完成', body: '已更新到 ' + short(r.sha) + '，正在重启服务…' }).show();
+      if (server) { try { await server.stop(); } catch { /* ignore */ } }
+      await bootServer();
+    } else {
+      log('update failed: ' + (r.reason || '') + ' at ' + (r.at || '?'));
+      dialog.showErrorBox('更新失败', (r.reason || '未知原因') + (r.at ? '\n[阶段：' + r.at + ']' : ''));
+    }
+  } finally {
+    updateBusy = false;
   }
 }
 
