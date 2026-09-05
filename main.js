@@ -1,9 +1,9 @@
 // main.js — Electron 主进程：拉起 dsh 服务器、加载其 web UI、托盘常驻、检测并执行更新。
-const { app, BrowserWindow, Tray, Menu, dialog, Notification, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, dialog, Notification, nativeImage, shell, globalShortcut } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
-const { startServer } = require('./server.js');
-const { makeUpdater } = require('./updater.js');
+const { startServer, waitForPort } = require('./server.js');
+const { makeUpdater, headSha } = require('./updater.js');
 const { loadConfig } = require('./config-lib.js');
 
 const cfg = loadConfig(path.join(__dirname, 'config.json'));
@@ -49,6 +49,39 @@ const LOADING_HTML = '<html><head><meta charset="utf-8"></head><body style="font
   '<div style="font-size:20px;font-weight:600">DeepSeek Harness</div>' +
   '<div style="margin-top:12px;font-size:13px;opacity:.75">正在启动服务…</div></body></html>';
 
+const PROGRESS_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>' +
+  'body{margin:0;font:12px/1.6 Consolas,monospace;background:#1e1f22;color:#d6d9de;display:flex;flex-direction:column}' +
+  'h4{margin:10px 14px 6px;font:600 13px system-ui,sans-serif;color:#fff}' +
+  '#log{flex:1;margin:0 14px 12px;overflow:auto;white-space:pre-wrap;word-break:break-all}' +
+  '</style></head><body><h4>更新中：git 拉取 + 完整重建，完成后界面自动恢复…</h4><pre id="log"></pre></body></html>';
+
+let progressWin = null;
+
+function ensureProgressWindow() {
+  if (progressWin && !progressWin.isDestroyed()) return progressWin;
+  progressWin = new BrowserWindow({
+    width: 560,
+    height: 220,
+    show: false,
+    autoHideMenuBar: true,
+    maximizable: false,
+    title: '更新中',
+    webPreferences: { contextIsolation: true },
+  });
+  progressWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(PROGRESS_HTML));
+  progressWin.once('ready-to-show', () => { if (progressWin && !progressWin.isDestroyed()) progressWin.show(); });
+  progressWin.on('closed', () => { progressWin = null; });
+  return progressWin;
+}
+
+function progressLine(text) {
+  if (!progressWin || progressWin.isDestroyed()) return;
+  // 文本以 JSON 字符串字面量注入，构建输出里的引号/反斜杠不会破坏脚本
+  progressWin.webContents.executeJavaScript(
+    `(() => { const el = document.getElementById('log'); el.textContent += ${JSON.stringify(String(text) + '\n')}; el.scrollTop = el.scrollHeight; })()`
+  ).catch(() => { /* 窗口已被用户关闭，忽略 */ });
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -71,6 +104,11 @@ function createWindow() {
     win.hide();
   });
   win.webContents.on('did-finish-load', injectShellUI);
+  // 网页想新开的链接交给系统浏览器，避免脱离托盘管理的裸 Electron 窗口
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
   win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(LOADING_HTML));
 }
 
@@ -78,13 +116,32 @@ function ensureNav() { if (win && !win.isDestroyed()) win.loadURL(cfg.url); }
 
 const BOOT_RETRIES = 3;
 const BOOT_RETRY_DELAY_MS = 10000;
+const MAX_CRASH_RESTARTS = 5;
+const CRASH_RESTART_DELAY_MS = 3000;
+let crashRestarts = 0;
+
+/** spawn 前预检：端口被别的程序占用时立刻报真实原因，而不是误判成就绪或白等 90s。 */
+async function assertPortFree(port) {
+  const busy = await waitForPort(port, { timeoutMs: 1000 }).then(() => true, () => false);
+  if (busy) throw new Error(`端口 ${port} 已被其他程序占用，请关闭占用进程，或在 config.json 中更换 port`);
+}
+
+/** 给 server 打主动停止标记：watchServer 凭它区分「主动 stop」与「意外退出」。 */
+function markManualStop(s) {
+  s.stoppedByUser = false;
+  const origStop = s.stop.bind(s);
+  s.stop = async () => { s.stoppedByUser = true; await origStop(); };
+}
 
 async function bootServer(attempt = 1) {
-  server = startServer(cfg, (line) => log('server: ' + line.trimEnd()));
   try {
+    await assertPortFree(cfg.port);
+    server = startServer(cfg, (line) => log('server: ' + line.trimEnd()));
+    markManualStop(server);
     await server.ready;
     log('server ready, navigating to ' + cfg.url);
     ensureNav();
+    watchServer(server);
   } catch (e) {
     log('server failed: ' + e.message);
     if (quitting) return;
@@ -97,6 +154,28 @@ async function bootServer(attempt = 1) {
   }
 }
 
+/** 服务就绪后看护：意外退出（排除主动 stop/退出中）→ 自动重启，次数超限则停手报错。 */
+function watchServer(s) {
+  s.child.once('exit', (code, sig) => {
+    if (quitting || s.stoppedByUser) return;
+    crashRestarts += 1;
+    log(`server exited unexpectedly (code=${code}, sig=${sig})`);
+    if (crashRestarts > MAX_CRASH_RESTARTS) {
+      dialog.showErrorBox('DeepSeek Harness', '服务多次意外退出，已停止自动重启。请查看 app.log 排查。');
+      return;
+    }
+    new Notification({ title: 'DeepSeek Harness', body: `服务意外退出，自动重启中（${crashRestarts}/${MAX_CRASH_RESTARTS}）…` }).show();
+    setTimeout(() => { if (!quitting) bootServer(); }, CRASH_RESTART_DELAY_MS);
+  });
+}
+
+/** 手动重启：停掉旧服务重新拉起，并清零崩溃重启计数。 */
+async function restartServer() {
+  crashRestarts = 0;
+  if (server) { try { await server.stop(); } catch { /* ignore */ } }
+  await bootServer();
+}
+
 function showMainWindow() {
   if (!win || win.isDestroyed()) { createWindow(); return; }
   if (win.isMinimized()) win.restore();
@@ -104,17 +183,34 @@ function showMainWindow() {
   win.focus();
 }
 
+/** 全局快捷键动作：显示/隐藏切换。 */
+function toggleMainWindow() {
+  if (win && win.isVisible() && !win.isMinimized()) win.hide();
+  else showMainWindow();
+}
+
 function buildTray() {
   tray = new Tray(nativeImage.createFromPath(cfg.icon));
   tray.setToolTip('DeepSeek Harness');
   const menu = Menu.buildFromTemplate([
     { label: '显示 / 隐藏', click: () => { if (win && win.isVisible()) win.hide(); else showMainWindow(); } },
+    { label: '重启服务器', click: () => { restartServer(); } },
+    { label: '在浏览器打开', click: () => { shell.openExternal(cfg.url); } },
+    { label: '打开日志', click: () => { shell.openPath(LOG); } },
     { label: '检查更新', click: () => runUpdateCheck(true) },
     { type: 'separator' },
     { label: '退出', click: () => { quitting = true; app.quit(); } },
   ]);
   tray.setContextMenu(menu);
   tray.on('click', () => { if (win && win.isVisible()) win.hide(); else showMainWindow(); });
+}
+
+/** 托盘 tooltip 带上外层仓库当前 HEAD，更新有没有生效一眼可见。 */
+async function refreshTrayTooltip() {
+  try {
+    const sha = await headSha(cfg);
+    if (tray && !tray.isDestroyed()) tray.setToolTip('DeepSeek Harness' + (sha ? `\nrepo: ${short(sha)}` : ''));
+  } catch { /* tooltip 缺版本号不是致命问题 */ }
 }
 
 let updateBusy = false;
@@ -155,19 +251,41 @@ async function runUpdateCheck(manual = false) {
     if (choice.response !== 0) return;
     new Notification({ title: '正在更新', body: 'git 拉取 + 完整重建中，请稍候…' }).show();
     log('apply update start');
-    const r = await updater.applyUpdate((line) => log('update: ' + line));
+    ensureProgressWindow();
+    const onProgress = (line) => {
+      log('update: ' + line);
+      for (const l of String(line).split('\n')) if (l.trim() !== '') progressLine(l);
+    };
+    const r = await updater.applyUpdate(onProgress).catch((e) => ({ ok: false, reason: e.message, at: 'applyUpdate' }));
     if (r.ok) {
+      if (progressWin && !progressWin.isDestroyed()) progressWin.close();
       log('update done to ' + r.sha);
       new Notification({ title: '更新完成', body: '已更新到 ' + short(r.sha) + '，正在重启服务…' }).show();
       if (server) { try { await server.stop(); } catch { /* ignore */ } }
       await bootServer();
+      refreshTrayTooltip();
     } else {
+      // 失败时保留进度窗口，让用户能看到最后一段构建输出再关闭
       log('update failed: ' + (r.reason || '') + ' at ' + (r.at || '?'));
       dialog.showErrorBox('更新失败', (r.reason || '未知原因') + (r.at ? '\n[阶段：' + r.at + ']' : ''));
     }
   } finally {
     updateBusy = false;
   }
+}
+
+/** 按配置维护登录自启项（openAtLogin:false 同样幂等清除）。 */
+function applyAutoStart() {
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!cfg.autoStart, path: process.execPath, args: [__dirname] });
+  } catch (e) { log('设置开机自启失败: ' + e.message); }
+}
+
+/** 注册全局呼出/隐藏快捷键；冲突时跳过并记日志（依赖运行环境，不算配置错误）。 */
+function registerHotkey() {
+  if (!cfg.hotkey) return;
+  const ok = globalShortcut.register(cfg.hotkey, toggleMainWindow);
+  if (!ok) log(`全局快捷键 ${cfg.hotkey} 注册失败（可能被其他程序占用），已跳过`);
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -179,6 +297,9 @@ if (!gotLock) {
   app.whenReady().then(() => {
     createWindow();
     buildTray();
+    refreshTrayTooltip();
+    applyAutoStart();
+    registerHotkey();
     bootServer();
     setTimeout(() => runUpdateCheck(false), 10000);
     setInterval(() => runUpdateCheck(false), cfg.checkIntervalMs);
@@ -189,4 +310,5 @@ if (!gotLock) {
     if (!quitting) { e.preventDefault(); return; }
     if (server) { try { await server.stop(); log('server stopped'); } catch { /* ignore */ } }
   });
+  app.on('will-quit', () => globalShortcut.unregisterAll());
 }
