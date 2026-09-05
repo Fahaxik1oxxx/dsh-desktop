@@ -3,8 +3,9 @@
 const path = require('node:path');
 const net = require('node:net');
 const { startServer } = require('../server.js');
+const { loadConfig } = require('../config-lib.js');
 
-const cfg = require(path.join(__dirname, '..', 'config.json'));
+const cfg = loadConfig(path.join(__dirname, '..', 'config.json'));
 
 /** 轮询直到端口无法连接（已释放），或超时。 */
 function waitForPortGone(port, { host = '127.0.0.1', timeoutMs = 10000, intervalMs = 300 } = {}) {

@@ -1,0 +1,59 @@
+# dsh-desktop — DeepSeek Harness 桌面壳
+
+把本地运行的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) web 界面包成 Electron 桌面应用，并内置「检测 upstream 新版本 → 提示 → 用户确认 → git 拉取 + 重建 + 重启」的更新链路。
+
+> **说明**：应用里的 web 页面本身来自上游 deepseek-harness（`apps/web`），本仓库只包含 Electron 壳、服务器生命周期管理和更新器，不包含也不修改上游代码。上游项目 MIT 许可，版权归 DeepSeek 所有。
+
+## 工作方式
+
+```
+deepseek-harness/            ← 上游仓库的干净克隆（保持可 fast-forward）
+  └─ desktop/                ← 本仓库（独立 git 仓库，嵌套在外层克隆内）
+```
+
+- 主进程 spawn 本地 node 服务器（`node apps/cli/lib/bin.js web`，默认 127.0.0.1:3080），轮询就绪后开窗加载；托盘控制显隐/退出，关闭窗口隐藏到托盘。
+- 更新器每 `checkIntervalMs`（默认 30 分钟）经 Git Bash 执行 `git fetch` 比对远端；检测到新版本且用户确认后：`git pull --ff-only` → 依赖变化时 `corepack pnpm install` → `npm run build` → 重启服务器。
+- 外层克隆只允许 fast-forward：工作区有 tracked 改动或本地已分叉时更新中止，不会覆盖任何本地内容。
+
+## 环境要求
+
+- Windows + [Git for Windows](https://gitforwindows.org/)（更新链路经 Git Bash 执行）
+- Node.js（建议 v22+）
+- 上游仓库已安装依赖并完成过一次构建（服务器从 `apps/cli/lib/bin.js` 启动，启动前需要 `pnpm install && pnpm run build`）
+
+## 使用
+
+```sh
+git clone https://github.com/Fahaxik1oxxx/dsh-desktop.git
+cd dsh-desktop
+npm install          # 安装 Electron
+cp config.example.json config.json   # Windows: copy
+npm start
+```
+
+编辑 `config.json`（已被 gitignore，按机器填写，代码不硬编码任何路径）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `repo` | 外层 deepseek-harness 克隆的绝对路径 |
+| `nodeExe` | node.exe 绝对路径（服务器与更新链路都用它） |
+| `bashExe` | Git Bash 的 `bash.exe` 绝对路径（`C:\Program Files\Git\usr\bin\bash.exe`） |
+| `serverArgs` | 传给 node 的服务器入口参数，默认 `["apps/cli/lib/bin.js", "web"]` |
+| `port` / `url` | 服务器端口与加载地址 |
+| `icon` | 窗口/托盘图标路径（可用上游仓库或自备 `.ico`） |
+| `checkIntervalMs` | 更新检测间隔，毫秒 |
+
+Electron 下载慢可设镜像：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
+
+## 开发与测试
+
+```sh
+node --test          # 单元测试（更新编排、路径转换、git 判定）
+node scripts/server-smoke.js   # 非 GUI 冒烟：拉起真实服务器等 3080 就绪，停掉后断言端口释放
+```
+
+PATH 里没有 node 时，用绝对路径运行，例如 `"D:\Compile\Node\node.exe" --test`。
+
+## License
+
+本仓库代码 MIT。web 界面与上游功能归 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT, Copyright (c) 2026 DeepSeek）所有；DeepSeek 徽标归其权利人所有。

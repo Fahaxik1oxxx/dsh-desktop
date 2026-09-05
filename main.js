@@ -4,8 +4,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { startServer } = require('./server.js');
 const { makeUpdater } = require('./updater.js');
+const { loadConfig } = require('./config-lib.js');
 
-const cfg = require('./config.json');
+const cfg = loadConfig(path.join(__dirname, 'config.json'));
 const LOG = path.join(__dirname, 'app.log');
 
 function log(msg) {

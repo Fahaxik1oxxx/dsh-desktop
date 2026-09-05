@@ -15,9 +15,9 @@ function makeUpdater(cfg, deps = {}) {
   const repo = cfg.repo;
   // runGit: (args) -> {code,stdout,stderr}，真实调用走 git.exe
   const runGit = deps.runGit || ((args) => run(gitExe, args, { cwd: repo, timeoutMs: 900000 }));
-  // runBash: (script, {timeoutMs}) -> {code,stdout,stderr}，真实调用经 bash -c + 显式 PATH
+  // runBash: (script, {timeoutMs}) -> {code,stdout,stderr}，真实调用经 bash -c，PATH 前置 node.exe 所在目录
   const runBash = deps.runBash || ((script, { timeoutMs = 1800000 } = {}) =>
-    run(cfg.bashExe, ['-c', `export PATH="/d/Compile/Node:$PATH"; ${script}`], { cwd: repo, timeoutMs }));
+    run(cfg.bashExe, ['-c', `export PATH="${winToPosix(path.dirname(cfg.nodeExe))}:$PATH"; ${script}`], { cwd: repo, timeoutMs }));
 
   async function gitOut(args) {
     const r = await runGit(args);
