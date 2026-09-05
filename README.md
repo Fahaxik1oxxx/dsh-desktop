@@ -11,9 +11,11 @@ deepseek-harness/            ← 上游仓库的干净克隆（保持可 fast-fo
   └─ desktop/                ← 本仓库（独立 git 仓库，嵌套在外层克隆内）
 ```
 
-- 主进程 spawn 本地 node 服务器（`node apps/cli/lib/bin.js web`，默认 127.0.0.1:3080），轮询就绪后开窗加载；托盘控制显隐/退出，关闭窗口隐藏到托盘。
-- 更新器每 `checkIntervalMs`（默认 30 分钟）经 Git Bash 执行 `git fetch` 比对远端；检测到新版本且用户确认后：`git pull --ff-only` → 依赖变化时 `corepack pnpm install` → `npm run build` → 重启服务器。
+- 主进程 spawn 本地 node 服务器（`node apps/cli/lib/bin.js web`，默认 127.0.0.1:3080），轮询就绪后开窗加载；启动前预检端口占用，被别的程序占了会直接报明确原因。
+- 服务就绪后进入看护：进程意外退出自动重启（最多 5 次），主动停止/退出应用不会误触发。
+- 更新器每 `checkIntervalMs`（默认 30 分钟）经 Git Bash 执行 `git fetch` 比对远端；检测到新版本且用户确认后：`git pull --ff-only` → 依赖变化时 `corepack pnpm install` → `npm run build` → 重启服务器，全程在进度窗口显示构建输出；本地已分叉时直接提示手动处理，不再弹确认框。
 - 外层克隆只允许 fast-forward：工作区有 tracked 改动或本地已分叉时更新中止，不会覆盖任何本地内容。
+- 网页里新开的链接交给系统浏览器；托盘支持 显示/隐藏、重启服务器、在浏览器打开、打开日志、检查更新，tooltip 带当前仓库 HEAD。
 
 ## 环境要求
 
@@ -62,6 +64,8 @@ npm start
 | `port` / `url` | 服务器端口与加载地址 |
 | `icon` | 窗口/托盘图标路径（可用上游仓库或自备 `.ico`） |
 | `checkIntervalMs` | 更新检测间隔，毫秒 |
+| `autoStart` | 可选，开机自启（Windows 登录项），默认 `false` |
+| `hotkey` | 可选，全局呼出/隐藏窗口快捷键如 `Alt+Shift+D`；缺省或空字符串关闭 |
 
 Electron 下载慢可设镜像：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
