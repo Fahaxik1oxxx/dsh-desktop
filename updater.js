@@ -2,7 +2,7 @@
 // 依赖注入：makeUpdater(cfg, deps)。deps 可覆盖 runGit/runBash，便于单测。
 const path = require('node:path');
 const { run } = require('./proc.js');
-const { hasTrackedChanges, isBehind, lockfileChanged } = require('./gitup.js');
+const { hasTrackedChanges, isBehind, lockfileChanged, ffPossible } = require('./gitup.js');
 const { runUpdateChain, winToPosix } = require('./update-lib.js');
 
 function defaultGitExe(cfg) {
@@ -24,13 +24,15 @@ function makeUpdater(cfg, deps = {}) {
     return r.stdout.trim();
   }
 
-  /** fetch 远端并比对本地 HEAD。网络失败返回 reachable:false。 */
+  /** fetch 远端并比对本地 HEAD。网络失败返回 reachable:false；无法快进时 diverged:true。 */
   async function checkForUpdate() {
     const f = await runBash(`git -C "${winToPosix(repo)}" fetch origin master 2>&1`, { timeoutMs: 240000 });
-    if (f.code !== 0) return { reachable: false, ahead: false, localSha: null, remoteSha: null, error: (f.stderr || f.stdout).slice(0, 400) };
+    if (f.code !== 0) return { reachable: false, ahead: false, diverged: false, localSha: null, remoteSha: null, error: (f.stderr || f.stdout).slice(0, 400) };
     const localSha = await gitOut(['rev-parse', 'HEAD']);
     const remoteSha = await gitOut(['rev-parse', 'FETCH_HEAD']);
-    return { reachable: true, ahead: isBehind(localSha, remoteSha), localSha, remoteSha };
+    // ffPossible 的 runFn 约定收带 'git' 前缀的参数；runGit 收不带前缀的，这里剥离。
+    const ff = await ffPossible(repo, (args) => runGit(args[0] === 'git' ? args.slice(1) : args));
+    return { reachable: true, ahead: isBehind(localSha, remoteSha), diverged: !ff, localSha, remoteSha };
   }
 
   /**

@@ -74,3 +74,43 @@ test('applyUpdate: 干净+可快进+无依赖变化时走完整链路成功', as
   assert.ok(calls.includes('pull'));
   assert.equal(built, true);
 });
+
+function checkUpdater(runGitHandlers) {
+  return makeUpdater(
+    { repo: 'D:\\AI\\DSH', bashExe: 'C:\\x\\bash.exe' },
+    { runGit: fakeGit(runGitHandlers), runBash: async () => ({ code: 0, stdout: '', stderr: '' }) },
+  );
+}
+
+test('checkForUpdate: 可快进（落后）时 diverged 为 false', async () => {
+  const u = checkUpdater([
+    [['rev-parse', 'HEAD'], { code: 0, stdout: 'local\n', stderr: '' }],
+    [['rev-parse', 'FETCH_HEAD'], { code: 0, stdout: 'remote\n', stderr: '' }],
+    [['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'], { code: 0, stdout: '', stderr: '' }],
+  ]);
+  const info = await u.checkForUpdate();
+  assert.deepEqual(info, { reachable: true, ahead: true, diverged: false, localSha: 'local', remoteSha: 'remote' });
+});
+
+test('checkForUpdate: 无法快进（本地领先或分叉）时 diverged 为 true', async () => {
+  const u = checkUpdater([
+    [['rev-parse', 'HEAD'], { code: 0, stdout: 'local\n', stderr: '' }],
+    [['rev-parse', 'FETCH_HEAD'], { code: 0, stdout: 'remote\n', stderr: '' }],
+    [['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'], { code: 1, stdout: '', stderr: '' }],
+  ]);
+  const info = await u.checkForUpdate();
+  assert.equal(info.reachable, true);
+  assert.equal(info.ahead, true);
+  assert.equal(info.diverged, true);
+});
+
+test('checkForUpdate: 与远端一致时 diverged 为 false', async () => {
+  const u = checkUpdater([
+    [['rev-parse', 'HEAD'], { code: 0, stdout: 'same\n', stderr: '' }],
+    [['rev-parse', 'FETCH_HEAD'], { code: 0, stdout: 'same\n', stderr: '' }],
+    [['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'], { code: 0, stdout: '', stderr: '' }],
+  ]);
+  const info = await u.checkForUpdate();
+  assert.equal(info.ahead, false);
+  assert.equal(info.diverged, false);
+});
