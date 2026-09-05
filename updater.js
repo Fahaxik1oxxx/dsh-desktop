@@ -88,4 +88,11 @@ function makeUpdater(cfg, deps = {}) {
   return { checkForUpdate, applyUpdate };
 }
 
-module.exports = { makeUpdater };
+/** 外层仓库当前 HEAD sha（本地操作，无网络）；失败返回空字符串。 */
+async function headSha(cfg) {
+  const gitExe = path.join(path.dirname(cfg.bashExe), 'git.exe');
+  const r = await run(gitExe, ['rev-parse', 'HEAD'], { cwd: cfg.repo, timeoutMs: 10000 });
+  return r.code === 0 ? r.stdout.trim() : '';
+}
+
+module.exports = { makeUpdater, headSha };
