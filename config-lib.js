@@ -20,6 +20,13 @@ function loadConfig(file) {
   if (!Number.isInteger(cfg.checkIntervalMs) || cfg.checkIntervalMs < 1000) {
     throw new Error('config: checkIntervalMs 必须是 ≥1000 的整数毫秒');
   }
+  // 可选字段：缺省用默认值，存在则校验类型
+  if (cfg.autoStart !== undefined && typeof cfg.autoStart !== 'boolean') {
+    throw new Error('config: autoStart 必须是布尔类型');
+  }
+  if (cfg.hotkey !== undefined && typeof cfg.hotkey !== 'string') {
+    throw new Error('config: hotkey 必须是字符串类型（空字符串表示关闭）');
+  }
   if (!fs.existsSync(cfg.repo) || !fs.statSync(cfg.repo).isDirectory()) {
     throw new Error(`config: repo 必须指向已存在的目录: ${cfg.repo}`);
   }
