@@ -21,15 +21,35 @@ deepseek-harness/            ← 上游仓库的干净克隆（保持可 fast-fo
 - Node.js（建议 v22+）
 - 上游仓库已安装依赖并完成过一次构建（服务器从 `apps/cli/lib/bin.js` 启动，启动前需要 `pnpm install && pnpm run build`）
 
-## 使用
+## 从零安装
+
+桌面壳只是包装层：web 界面来自上游源码构建出的产物，壳的自动更新也依赖上游的源码克隆（git 拉取 + 重建）。第一次使用先把上游跑通：
 
 ```sh
+# 1. 克隆上游 deepseek-harness 并构建（Node ≥22.19 或 ≥24；pnpm 可用 corepack 启用，或 npm i -g pnpm）
+git clone https://github.com/deepseek-ai/deepseek-harness.git
+cd deepseek-harness
+pnpm install
+pnpm run build
+
+# 2. 配置 API Key：在 deepseek-harness 根目录创建 .env，写入一行
+#    （没有它界面能启动，但无法对话）：
+#    DEEPSEEK_API_KEY=sk-xxxxxxxx
+
+# 3. 在任意目录克隆本仓库并安装
+cd ..
 git clone https://github.com/Fahaxik1oxxx/dsh-desktop.git
 cd dsh-desktop
-npm install          # 安装 Electron
-cp config.example.json config.json   # Windows: copy
+npm install
+
+# 4. 创建本机配置（Windows cmd 下用 copy 代替 cp），按下一节的字段表改成实际路径
+cp config.example.json config.json
+
+# 5. 启动
 npm start
 ```
+
+已经有构建好的上游克隆的话，从第 3 步开始即可。
 
 编辑 `config.json`（已被 gitignore，按机器填写，代码不硬编码任何路径）：
 
