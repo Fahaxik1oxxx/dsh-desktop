@@ -1,9 +1,9 @@
 @echo off
-rem DeepSeek Harness 桌面版启动器。优先启动带应用图标的 dsh-desktop.exe，
-rem 这样 Windows 任务栏不会显示 Electron 默认图标。
+rem DeepSeek Harness 桌面版启动器。优先启动带应用图标的 DeepSeekHarness.exe，
+rem 这样 Windows 任务栏按该文件名分组，而不是 Electron 默认图标。
 setlocal
 set "DIST=%~dp0node_modules\electron\dist"
-set "APP=%DIST%\dsh-desktop.exe"
+set "APP=%DIST%\DeepSeekHarness.exe"
 set "ELEC=%DIST%\electron.exe"
 if exist "%APP%" (
   start "DeepSeek Harness" /D "%~dp0" "%APP%" .

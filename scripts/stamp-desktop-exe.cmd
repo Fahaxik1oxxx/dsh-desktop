@@ -1,10 +1,12 @@
 @echo off
-rem Copy Electron to dsh-desktop.exe and stamp deepseek.ico (Windows taskbar groups by exe name).
+rem Copy Electron to DeepSeekHarness.exe and stamp a BMP ICO.
+rem Windows taskbar groups by executable name; electron.exe always shows the default icon.
 setlocal
 set "ROOT=%~dp0.."
 set "SRC=%ROOT%\node_modules\electron\dist\electron.exe"
-set "DEST=%ROOT%\node_modules\electron\dist\dsh-desktop.exe"
-set "ICO=%ROOT%\deepseek.ico"
+set "DEST=%ROOT%\node_modules\electron\dist\DeepSeekHarness.exe"
+set "ICO=%ROOT%\deepseek-win.ico"
+if not exist "%ICO%" set "ICO=%ROOT%\deepseek.ico"
 set "RCEDIT=%ROOT%\node_modules\rcedit\bin\rcedit.exe"
 if not exist "%SRC%" exit /b 0
 if not exist "%ICO%" exit /b 0
