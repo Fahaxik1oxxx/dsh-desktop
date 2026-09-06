@@ -6,9 +6,11 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test"
+    "test": "node --test",
+    "postinstall": "node -e \"if(process.platform!=='win32')process.exit(0);const{execFileSync}=require('node:child_process');const{join}=require('node:path');try{execFileSync(join('node_modules','rcedit','bin','rcedit.exe'),[join('node_modules','electron','dist','electron.exe'),'--set-icon','deepseek.ico'],{stdio:'inherit'})}catch{process.exit(0)}\""
   },
   "devDependencies": {
-    "electron": "^44.1.1"
+    "electron": "^44.1.1",
+    "rcedit": "^5.0.1"
   }
 }

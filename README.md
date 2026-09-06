@@ -70,6 +70,8 @@ npm start
 
 Electron 下载慢可设镜像：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
+Windows 未打包时任务栏默认显示 electron.exe 图标；`npm install` 后会把 `deepseek.ico` 写入 `electron.exe`。若任务栏仍是旧图标，退出应用后重新从桌面快捷方式打开；必要时注销一次以刷新图标缓存。
+
 ## 开发与测试
 
 ```sh

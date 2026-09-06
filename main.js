@@ -7,6 +7,10 @@ const { makeUpdater, headSha } = require('./updater.js');
 const { loadConfig } = require('./config-lib.js');
 const { parseDshWebUrl } = require('./web-url.js');
 
+const APP_USER_MODEL_ID = 'com.deepseek.dsh-desktop';
+// Windows 任务栏按可执行文件分组；必须在创建窗口之前设置，并与快捷方式 AUMID 一致。
+app.setAppUserModelId(APP_USER_MODEL_ID);
+
 const cfg = loadConfig(path.join(__dirname, 'config.json'));
 // 自绘窗口控制按钮的 IPC（preload 经 contextBridge 暴露给页面，渲染端无 node 权限）
 ipcMain.handle('dsh-window:minimize', () => { if (win && !win.isDestroyed()) win.minimize(); });
@@ -174,6 +178,16 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  if (cfg.icon) win.setIcon(cfg.icon);
+  // 未打包时任务栏默认用 electron.exe 图标；与快捷方式共用 AUMID + 应用图标。
+  if (process.platform === 'win32') {
+    win.setAppDetails({
+      appId: APP_USER_MODEL_ID,
+      appIconPath: cfg.icon,
+      relaunchCommand: `"${process.execPath}" "${__dirname}"`,
+      relaunchDisplayName: 'DeepSeek Harness',
+    });
+  }
   win.once('ready-to-show', () => { if (win && !win.isDestroyed()) win.show(); });
   // 点 X 不销毁窗口，改为隐藏到托盘/任务栏；内容保留，恢复即秒显、不再白屏重载。
   win.on('close', (e) => {
@@ -393,7 +407,6 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => showMainWindow());
-  app.setAppUserModelId('com.deepseek.dsh-desktop');
   app.whenReady().then(() => {
     createWindow();
     buildTray();
