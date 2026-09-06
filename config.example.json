@@ -2,6 +2,7 @@
   "repo": "D:\\path\\to\\deepseek-harness",
   "nodeExe": "D:\\path\\to\\node.exe",
   "bashExe": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+  "gitExe": "C:\\Program Files\\Git\\cmd\\git.exe",
   "serverArgs": ["apps/cli/lib/bin.js", "web"],
   "port": 3080,
   "url": "http://127.0.0.1:3080",

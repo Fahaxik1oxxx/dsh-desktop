@@ -1,20 +1,38 @@
 // updater.js — 检测 upstream 新版本并在用户确认后执行 git 拉取+重建。
 // 依赖注入：makeUpdater(cfg, deps)。deps 可覆盖 runGit/runBash，便于单测。
+const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('./proc.js');
 const { hasTrackedChanges, isBehind, lockfileChanged, ffPossible } = require('./gitup.js');
 const { runUpdateChain, winToPosix } = require('./update-lib.js');
 
+/**
+ * 解析 git.exe：优先显式 cfg.gitExe；否则从 bashExe 推导，按 Git for Windows 的
+ * 各目录布局依次探测——新版安装的 usr\bin 里只有 bash.exe，git.exe 在 cmd 下。
+ */
 function defaultGitExe(cfg) {
-  // Git Bash 同目录下的 git.exe（usr/bin/git.exe）
-  return path.join(path.dirname(cfg.bashExe), 'git.exe');
+  if (cfg.gitExe) return cfg.gitExe;
+  const usrBin = path.dirname(cfg.bashExe);           // <Git根>\usr\bin
+  const gitRoot = path.dirname(path.dirname(usrBin)); // <Git根>
+  const candidates = [
+    path.join(usrBin, 'git.exe'),
+    path.join(gitRoot, 'cmd', 'git.exe'),
+    path.join(gitRoot, 'bin', 'git.exe'),
+    path.join(gitRoot, 'mingw64', 'bin', 'git.exe'),
+  ];
+  const hit = candidates.find((p) => fs.existsSync(p));
+  if (!hit) {
+    throw new Error(`config: 无法从 bashExe 推导 git.exe，请在 config.json 增加 "gitExe" 字段（尝试过：${candidates.join('；')}）`);
+  }
+  return hit;
 }
 
 function makeUpdater(cfg, deps = {}) {
-  const gitExe = deps.gitExe || defaultGitExe(cfg);
   const repo = cfg.repo;
+  // 惰性解析：注入 deps.runGit 的单测不触发文件探测，配置问题在首次真实调用时暴露
+  const gitExe = () => deps.gitExe || defaultGitExe(cfg);
   // runGit: (args) -> {code,stdout,stderr}，真实调用走 git.exe
-  const runGit = deps.runGit || ((args) => run(gitExe, args, { cwd: repo, timeoutMs: 900000 }));
+  const runGit = deps.runGit || ((args) => run(gitExe(), args, { cwd: repo, timeoutMs: 900000 }));
   // runBash: (script, {timeoutMs}) -> {code,stdout,stderr}，真实调用经 bash -c，PATH 前置 node.exe 所在目录
   const runBash = deps.runBash || ((script, { timeoutMs = 1800000 } = {}) =>
     run(cfg.bashExe, ['-c', `export PATH="${winToPosix(path.dirname(cfg.nodeExe))}:$PATH"; ${script}`], { cwd: repo, timeoutMs }));
@@ -90,9 +108,8 @@ function makeUpdater(cfg, deps = {}) {
 
 /** 外层仓库当前 HEAD sha（本地操作，无网络）；失败返回空字符串。 */
 async function headSha(cfg) {
-  const gitExe = path.join(path.dirname(cfg.bashExe), 'git.exe');
-  const r = await run(gitExe, ['rev-parse', 'HEAD'], { cwd: cfg.repo, timeoutMs: 10000 });
+  const r = await run(defaultGitExe(cfg), ['rev-parse', 'HEAD'], { cwd: cfg.repo, timeoutMs: 10000 });
   return r.code === 0 ? r.stdout.trim() : '';
 }
 
-module.exports = { makeUpdater, headSha };
+module.exports = { makeUpdater, headSha, defaultGitExe };

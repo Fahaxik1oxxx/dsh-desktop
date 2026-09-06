@@ -27,6 +27,9 @@ function loadConfig(file) {
   if (cfg.hotkey !== undefined && typeof cfg.hotkey !== 'string') {
     throw new Error('config: hotkey 必须是字符串类型（空字符串表示关闭）');
   }
+  if (cfg.gitExe !== undefined && (typeof cfg.gitExe !== 'string' || cfg.gitExe.length === 0)) {
+    throw new Error('config: gitExe 必须是非空字符串');
+  }
   if (!fs.existsSync(cfg.repo) || !fs.statSync(cfg.repo).isDirectory()) {
     throw new Error(`config: repo 必须指向已存在的目录: ${cfg.repo}`);
   }

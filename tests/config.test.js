@@ -68,6 +68,7 @@ test('loadConfig: autoStart/hotkey 可省略，存在则校验类型', () => {
   assert.ok(!('hotkey' in cfg));
   assert.throws(() => loadConfig(writeConfig({ autoStart: 'yes' })), /autoStart/);
   assert.throws(() => loadConfig(writeConfig({ hotkey: 123 })), /hotkey/);
+  assert.throws(() => loadConfig(writeConfig({ gitExe: 1 })), /gitExe/);
   const on = loadConfig(writeConfig({ autoStart: true, hotkey: '' }));
   assert.equal(on.autoStart, true);
   assert.equal(on.hotkey, '');

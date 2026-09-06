@@ -1,7 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { runUpdateChain, winToPosix } = require('../update-lib.js');
-const { makeUpdater } = require('../updater.js');
+const { makeUpdater, defaultGitExe } = require('../updater.js');
 
 test('runUpdateChain: 全步骤成功返回 ok', async () => {
   const steps = [1, 2, 3].map((n) => ({ name: 's' + n, fn: async () => ({ ok: true }) }));
@@ -113,4 +116,27 @@ test('checkForUpdate: 与远端一致时 diverged 为 false', async () => {
   const info = await u.checkForUpdate();
   assert.equal(info.ahead, false);
   assert.equal(info.diverged, false);
+});
+
+test('defaultGitExe: 显式 gitExe 优先', () => {
+  assert.equal(defaultGitExe({ gitExe: 'C:\\g\\git.exe', bashExe: 'C:\\x\\usr\\bin\\bash.exe' }), 'C:\\g\\git.exe');
+});
+
+test('defaultGitExe: 从 bashExe 探测 cmd/git.exe（新版 Git for Windows 布局）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-git-'));
+  fs.mkdirSync(path.join(root, 'usr', 'bin'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'cmd'), { recursive: true });
+  const expected = path.join(root, 'cmd', 'git.exe');
+  fs.writeFileSync(expected, '');
+  const got = defaultGitExe({ bashExe: path.join(root, 'usr', 'bin', 'bash.exe') });
+  assert.equal(got.toLowerCase(), expected.toLowerCase());
+});
+
+test('defaultGitExe: 探测不到时抛出带指引的错误', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-git2-'));
+  fs.mkdirSync(path.join(root, 'usr', 'bin'), { recursive: true });
+  assert.throws(
+    () => defaultGitExe({ bashExe: path.join(root, 'usr', 'bin', 'bash.exe') }),
+    /gitExe/,
+  );
 });
