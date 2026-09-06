@@ -38,6 +38,7 @@ let quitting = false;
 // 自绘窗口控制：叠在右栏顶上，不另开一栏（对齐 ZCode 左右两栏）。
 const CONTROL_HEIGHT = 36;
 const CONTROL_WIDTH = 138;
+const SESSION_LOG_GAP = 24; // Session log 与窗口按钮之间的空隙
 const DRAG_HEIGHT = 12; // 会话头 padding-top，不挡住标题和 Session log
 
 /**
@@ -94,6 +95,7 @@ function injectShellUI() {
   if (!win || win.isDestroyed()) return;
   const height = CONTROL_HEIGHT;
   const controlWidth = CONTROL_WIDTH;
+  const sessionLogShift = CONTROL_WIDTH + SESSION_LOG_GAP;
   const dragHeight = DRAG_HEIGHT;
   const maximized = win.isMaximized();
   win.webContents.executeJavaScript(`(() => {
@@ -119,10 +121,7 @@ function injectShellUI() {
         const t = (b.textContent || '').replace(/\\s+/g, ' ').trim();
         if (t === 'Session log' || t === '会话日志') {
           const host = b.parentElement;
-          if (host && !host.dataset.dshShifted) {
-            host.dataset.dshShifted = '1';
-            host.style.marginRight = '${controlWidth}px';
-          }
+          if (host) host.style.marginRight = '${sessionLogShift}px';
         }
       }
     };
