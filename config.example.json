@@ -3,7 +3,7 @@
   "nodeExe": "D:\\path\\to\\node.exe",
   "bashExe": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
   "gitExe": "C:\\Program Files\\Git\\cmd\\git.exe",
-  "serverArgs": ["apps/cli/lib/bin.js", "web"],
+  "serverArgs": ["apps/cli/lib/bin.js", "web", "--no-open"],
   "port": 3080,
   "url": "http://127.0.0.1:3080",
   "icon": "D:\\path\\to\\deepseek.ico",

@@ -11,7 +11,7 @@ deepseek-harness/            ← 上游仓库的干净克隆（保持可 fast-fo
   └─ desktop/                ← 本仓库（独立 git 仓库，嵌套在外层克隆内）
 ```
 
-- 主进程 spawn 本地 node 服务器（`node apps/cli/lib/bin.js web`，默认 127.0.0.1:3080），轮询就绪后开窗加载；启动前预检端口占用，被别的程序占了会直接报明确原因。右上角 最小化/最大化/关闭 为注入页面的自绘按钮（透明融于界面，无 OS 原生按钮）。
+- 主进程 spawn 本地 node 服务器（`node apps/cli/lib/bin.js web --no-open`，默认 127.0.0.1:3080），轮询就绪后只在 Electron 窗口加载；`--no-open` 关掉上游默认的系统浏览器跳转。启动前预检端口占用，被别的程序占了会直接报明确原因。右上角 最小化/最大化/关闭 为注入页面的自绘按钮（透明融于界面，无 OS 原生按钮）。
 - 服务就绪后进入看护：进程意外退出自动重启（最多 5 次），主动停止/退出应用不会误触发。
 - 更新器每 `checkIntervalMs`（默认 30 分钟）经 Git Bash 执行 `git fetch` 比对远端；检测到新版本且用户确认后：`git pull --ff-only` → 依赖变化时 `corepack pnpm install` → `npm run build` → 重启服务器，全程在进度窗口显示构建输出；本地已分叉时直接提示手动处理，不再弹确认框。
 - 外层克隆只允许 fast-forward：工作区有 tracked 改动或本地已分叉时更新中止，不会覆盖任何本地内容。
@@ -61,7 +61,7 @@ npm start
 | `nodeExe` | node.exe 绝对路径（服务器与更新链路都用它） |
 | `bashExe` | Git Bash 的 `bash.exe` 绝对路径（`C:\Program Files\Git\usr\bin\bash.exe`） |
 | `gitExe` | 可选，git.exe 绝对路径；缺省时从 `bashExe` 按 Git for Windows 各目录布局自动推导（新版安装通常在 `cmd\git.exe`） |
-| `serverArgs` | 传给 node 的服务器入口参数，默认 `["apps/cli/lib/bin.js", "web"]` |
+| `serverArgs` | 传给 node 的服务器入口参数，默认 `["apps/cli/lib/bin.js", "web", "--no-open"]`（`--no-open` 禁止上游打开系统浏览器） |
 | `port` / `url` | 服务器端口与加载地址 |
 | `icon` | 窗口/托盘图标路径（可用上游仓库或自备 `.ico`） |
 | `checkIntervalMs` | 更新检测间隔，毫秒 |

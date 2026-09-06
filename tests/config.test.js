@@ -62,6 +62,11 @@ test('loadConfig: port 与 checkIntervalMs 越界抛错', () => {
   assert.throws(() => loadConfig(writeConfig({ checkIntervalMs: 500 })), /checkIntervalMs/);
 });
 
+test('config.example.json: 默认带 --no-open，避免启动时跳出系统浏览器', () => {
+  const example = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.example.json'), 'utf8'));
+  assert.ok(example.serverArgs.includes('--no-open'));
+});
+
 test('loadConfig: autoStart/hotkey 可省略，存在则校验类型', () => {
   const cfg = loadConfig(writeConfig());
   assert.ok(!('autoStart' in cfg));
