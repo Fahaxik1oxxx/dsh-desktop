@@ -122,13 +122,10 @@ function injectShellUI() {
       const utilities = logBtn.parentElement;
       const titleRow = utilities && utilities.parentElement;
       if (!utilities || !titleRow) return;
-      utilities.style.marginRight = '0';
       const cluster = [...titleRow.children].find((el) => el !== utilities);
-      if (!cluster) return;
-      const actions = cluster.lastElementChild;
-      if (actions && utilities.previousElementSibling !== actions) {
-        cluster.insertBefore(utilities, actions.nextSibling);
-      }
+      if (cluster) cluster.style.flex = '0 1 auto';
+      utilities.style.marginLeft = '12px';
+      utilities.style.marginRight = '0';
     };
     placeSessionLog();
     if (!window.__dshHeaderWatch) {
