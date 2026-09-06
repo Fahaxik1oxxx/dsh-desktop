@@ -1,5 +1,5 @@
 // main.js — Electron 主进程：拉起 dsh 服务器、加载其 web UI、托盘常驻、检测并执行更新。
-const { app, BrowserWindow, Tray, Menu, dialog, Notification, nativeImage, shell, globalShortcut } = require('electron');
+const { app, BrowserWindow, Tray, Menu, dialog, Notification, nativeImage, shell, globalShortcut, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { startServer, waitForPort } = require('./server.js');
@@ -7,6 +7,14 @@ const { makeUpdater, headSha } = require('./updater.js');
 const { loadConfig } = require('./config-lib.js');
 
 const cfg = loadConfig(path.join(__dirname, 'config.json'));
+// 自绘窗口控制按钮的 IPC（preload 经 contextBridge 暴露给页面，渲染端无 node 权限）
+ipcMain.handle('dsh-window:minimize', () => { if (win && !win.isDestroyed()) win.minimize(); });
+ipcMain.handle('dsh-window:toggle-maximize', () => {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMaximized()) win.unmaximize(); else win.maximize();
+});
+ipcMain.handle('dsh-window:close', () => { if (win && !win.isDestroyed()) win.close(); }); // 走既有关窗到托盘逻辑
+
 const LOG = path.join(__dirname, 'app.log');
 
 function log(msg) {
@@ -26,23 +34,74 @@ let server = null;
 let updater = null;
 let quitting = false;
 
-// Window Controls Overlay 参数（右上角系统按钮区域的背景色与拖拽条）。
-const OVERLAY_HEIGHT = 36; // 与 titleBarOverlay.height 对应
-const DRAG_HEIGHT = 18;    // 顶部可拖动窗口的透明条高度（避开下方应用可点区域）
+// 自绘窗口控制按钮几何（对齐 ZCode/VS Code：46×36 透明按钮，融于页面背景）。
+const DRAG_HEIGHT = 18; // 顶部可拖动窗口的透明条高度（避开下方应用可点区域）
+
+/**
+ * 注入到页面的自绘窗口控制按钮（对齐 ZCode/VS Code 式标题栏：按钮无底色、细线图标、
+ * 完全融于页面背景；关闭键悬停红底白字）。本函数会被序列化后在渲染端执行，
+ * 只能引用 DOM/window，不能引用主进程作用域。
+ */
+function installWindowControls(initialMaximized) {
+  if (document.getElementById('dsh-win-controls') || !window.dshWindow) return;
+  const strip = document.createElement('div');
+  strip.id = 'dsh-win-controls';
+  strip.style.cssText = 'position:fixed;top:0;right:0;width:138px;height:36px;z-index:2147483647;display:flex;-webkit-app-region:no-drag;color:#4a4f57;';
+  const style = document.createElement('style');
+  style.textContent =
+    '.dsh-wc{flex:1 1 0;height:36px;border:0;padding:0;margin:0;background:transparent;color:inherit;' +
+    'display:flex;align-items:center;justify-content:center;border-radius:0;box-shadow:none;font:inherit;}' +
+    '.dsh-wc:hover{background:rgba(0,0,0,0.055);}' +
+    '.dsh-wc:active{background:rgba(0,0,0,0.1);}' +
+    '.dsh-wc-close:hover{background:#e81123;color:#fff !important;}' +
+    '.dsh-wc-close:active{background:#f1707a;color:#fff !important;}' +
+    '.dsh-wc svg{display:block;pointer-events:none;}';
+  strip.appendChild(style);
+  const mk = (cls, title) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dsh-wc ' + cls;
+    b.title = title;
+    return b;
+  };
+  const minB = mk('dsh-wc-min', '最小化');
+  minB.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10"><rect x="0" y="4.6" width="10" height="0.8" fill="currentColor"/></svg>';
+  const maxB = mk('dsh-wc-max', '最大化');
+  const closeB = mk('dsh-wc-close', '关闭');
+  closeB.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10"><path d="M0.6 0.6L9.4 9.4M9.4 0.6L0.6 9.4" stroke="currentColor" stroke-width="0.9" fill="none"/></svg>';
+  const setMaxGlyph = (maximized) => {
+    maxB.title = maximized ? '向下还原' : '最大化';
+    maxB.innerHTML = maximized
+      ? '<svg width="10" height="10" viewBox="0 0 10 10"><rect x="0" y="2.6" width="6.8" height="6.8" fill="none" stroke="currentColor" stroke-width="0.9"/><path d="M2.8 2.6V0.4H9.6V7.4H7.4" fill="none" stroke="currentColor" stroke-width="0.9"/></svg>'
+      : '<svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="0.9"/></svg>';
+  };
+  setMaxGlyph(initialMaximized);
+  minB.addEventListener('click', () => window.dshWindow.minimize());
+  maxB.addEventListener('click', () => window.dshWindow.toggleMaximize());
+  closeB.addEventListener('click', () => window.dshWindow.close());
+  window.dshWindow.onMaximizeChange(setMaxGlyph);
+  strip.appendChild(minB);
+  strip.appendChild(maxB);
+  strip.appendChild(closeB);
+  document.body.appendChild(strip);
+}
 
 function injectShellUI() {
   if (!win || win.isDestroyed()) return;
   win.webContents.executeJavaScript(`(() => {
-    if (document.getElementById('dsh-drag-band')) return;
-    const band = document.createElement('div');
-    band.id = 'dsh-drag-band';
-    band.style.cssText = 'position:fixed;top:0;left:0;right:0;height:${DRAG_HEIGHT}px;' +
-      '-webkit-app-region:drag;z-index:2147483646;';
-    document.body.appendChild(band);
+    if (!document.getElementById('dsh-drag-band')) {
+      const band = document.createElement('div');
+      band.id = 'dsh-drag-band';
+      band.style.cssText = 'position:fixed;top:0;left:0;right:0;height:${DRAG_HEIGHT}px;' +
+        '-webkit-app-region:drag;z-index:2147483646;';
+      band.addEventListener('dblclick', () => { if (window.dshWindow) window.dshWindow.toggleMaximize(); });
+      document.body.appendChild(band);
+    }
     const css = document.createElement('style');
     css.textContent = 'button,input,textarea,select,a,[role="button"],[contenteditable="true"]{-webkit-app-region:no-drag}';
     document.head.appendChild(css);
   })()`);
+  win.webContents.executeJavaScript('(' + installWindowControls.toString() + ')(' + win.isMaximized() + ');');
 }
 
 const LOADING_HTML = '<html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#ffffff;color:#4a4f57">' +
@@ -91,10 +150,12 @@ function createWindow() {
     show: false, // 等首帧渲染完成再显示，避免白屏一闪
     backgroundColor: '#ffffff',
     autoHideMenuBar: true,
-    // 隐藏 OS 标题栏（去掉左上角标题/图标），由系统在右上角绘制原生 最小化/最大化/关闭。
+    // 隐藏 OS 标题栏；右上角 最小化/最大化/关闭 由注入的自绘按钮承担（见 injectShellUI）。
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#ffffff', symbolColor: '#4a4f57', height: OVERLAY_HEIGHT },
-    webPreferences: { contextIsolation: true },
+    webPreferences: {
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+    },
   });
   win.once('ready-to-show', () => { if (win && !win.isDestroyed()) win.show(); });
   // 点 X 不销毁窗口，改为隐藏到托盘/任务栏；内容保留，恢复即秒显、不再白屏重载。
@@ -103,6 +164,10 @@ function createWindow() {
     e.preventDefault();
     win.hide();
   });
+  // 最大化状态推送给自绘按钮切换 还原/最大化 图标
+  const sendMaximized = (v) => { if (win && !win.isDestroyed()) win.webContents.send('dsh-window:maximized', v); };
+  win.on('maximize', () => sendMaximized(true));
+  win.on('unmaximize', () => sendMaximized(false));
   win.webContents.on('did-finish-load', injectShellUI);
   // 网页想新开的链接交给系统浏览器，避免脱离托盘管理的裸 Electron 窗口
   win.webContents.setWindowOpenHandler(({ url }) => {
