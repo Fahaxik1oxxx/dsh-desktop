@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test",
-    "postinstall": "node -e \"if(process.platform!=='win32')process.exit(0);const{execFileSync}=require('node:child_process');const{join}=require('node:path');try{execFileSync(join('node_modules','rcedit','bin','rcedit.exe'),[join('node_modules','electron','dist','electron.exe'),'--set-icon','deepseek.ico'],{stdio:'inherit'})}catch{process.exit(0)}\""
+    "postinstall": "node -e \"if(process.platform!=='win32')process.exit(0);require('node:child_process').spawnSync('cmd.exe',['/c',require('node:path').join('scripts','stamp-desktop-exe.cmd')],{stdio:'inherit',windowsHide:true})\""
   },
   "devDependencies": {
     "electron": "^44.1.1",

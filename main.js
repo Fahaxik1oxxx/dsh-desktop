@@ -181,10 +181,13 @@ function createWindow() {
   if (cfg.icon) win.setIcon(cfg.icon);
   // 未打包时任务栏默认用 electron.exe 图标；与快捷方式共用 AUMID + 应用图标。
   if (process.platform === 'win32') {
+    const relaunchExe = fs.existsSync(path.join(path.dirname(process.execPath), 'dsh-desktop.exe'))
+      ? path.join(path.dirname(process.execPath), 'dsh-desktop.exe')
+      : process.execPath;
     win.setAppDetails({
       appId: APP_USER_MODEL_ID,
       appIconPath: cfg.icon,
-      relaunchCommand: `"${process.execPath}" "${__dirname}"`,
+      relaunchCommand: `"${relaunchExe}" "${__dirname}"`,
       relaunchDisplayName: 'DeepSeek Harness',
     });
   }
