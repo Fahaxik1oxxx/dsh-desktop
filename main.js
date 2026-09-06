@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const { startServer, waitForPort } = require('./server.js');
 const { makeUpdater, headSha } = require('./updater.js');
 const { loadConfig } = require('./config-lib.js');
+const { parseDshWebUrl } = require('./web-url.js');
 
 const cfg = loadConfig(path.join(__dirname, 'config.json'));
 // 自绘窗口控制按钮的 IPC（preload 经 contextBridge 暴露给页面，渲染端无 node 权限）
@@ -177,7 +178,9 @@ function createWindow() {
   win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(LOADING_HTML));
 }
 
-function ensureNav() { if (win && !win.isDestroyed()) win.loadURL(cfg.url); }
+let sessionUrl = cfg.url;
+
+function ensureNav() { if (win && !win.isDestroyed()) win.loadURL(sessionUrl); }
 
 const BOOT_RETRIES = 3;
 const BOOT_RETRY_DELAY_MS = 10000;
@@ -201,10 +204,26 @@ function markManualStop(s) {
 async function bootServer(attempt = 1) {
   try {
     await assertPortFree(cfg.port);
-    server = startServer(cfg, (line) => log('server: ' + line.trimEnd()));
+    let announced = '';
+    let resolveUrl;
+    const urlReady = new Promise((resolve) => { resolveUrl = resolve; });
+    server = startServer(cfg, (line) => {
+      announced += line;
+      log('server: ' + line.trimEnd());
+      const authed = parseDshWebUrl(announced, cfg);
+      if (authed) resolveUrl(authed);
+    });
     markManualStop(server);
     await server.ready;
-    log('server ready, navigating to ' + cfg.url);
+    let urlTimer;
+    const authed = await Promise.race([
+      urlReady,
+      new Promise((_, reject) => {
+        urlTimer = setTimeout(() => reject(new Error('服务器未在超时内打印认证 URL（dsh web: http://host:port/?token=…）')), 15000);
+      }),
+    ]).finally(() => clearTimeout(urlTimer));
+    sessionUrl = authed;
+    log('server ready, navigating to authenticated URL');
     ensureNav();
     watchServer(server);
   } catch (e) {
@@ -260,7 +279,7 @@ function buildTray() {
   const menu = Menu.buildFromTemplate([
     { label: '显示 / 隐藏', click: () => { if (win && win.isVisible()) win.hide(); else showMainWindow(); } },
     { label: '重启服务器', click: () => { restartServer(); } },
-    { label: '在浏览器打开', click: () => { shell.openExternal(cfg.url); } },
+    { label: '在浏览器打开', click: () => { if (/^https?:/i.test(sessionUrl)) shell.openExternal(sessionUrl); } },
     { label: '打开日志', click: () => { shell.openPath(LOG); } },
     { label: '检查更新', click: () => runUpdateCheck(true) },
     { type: 'separator' },
