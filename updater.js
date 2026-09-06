@@ -27,15 +27,25 @@ function defaultGitExe(cfg) {
   return hit;
 }
 
+/**
+ * 组装 runBash 的 bash 参数：PATH 前置 node 目录与 Git 的 usr\bin。
+ * 非登录 bash 继承的只有 Windows PATH，corepack/npm 的 sh 脚本依赖的
+ * sed/dirname/uname 都在 usr\bin，缺了它们 install/build 阶段必炸。
+ */
+function bashCommand(cfg, script) {
+  const pathPre = `${winToPosix(path.dirname(cfg.nodeExe))}:${winToPosix(path.dirname(cfg.bashExe))}`;
+  return ['-c', `export PATH="${pathPre}:$PATH"; ${script}`];
+}
+
 function makeUpdater(cfg, deps = {}) {
   const repo = cfg.repo;
   // 惰性解析：注入 deps.runGit 的单测不触发文件探测，配置问题在首次真实调用时暴露
   const gitExe = () => deps.gitExe || defaultGitExe(cfg);
   // runGit: (args) -> {code,stdout,stderr}，真实调用走 git.exe
   const runGit = deps.runGit || ((args) => run(gitExe(), args, { cwd: repo, timeoutMs: 900000 }));
-  // runBash: (script, {timeoutMs}) -> {code,stdout,stderr}，真实调用经 bash -c，PATH 前置 node.exe 所在目录
+  // runBash: (script, {timeoutMs}) -> {code,stdout,stderr}，真实调用经 bash -c + 显式 PATH
   const runBash = deps.runBash || ((script, { timeoutMs = 1800000 } = {}) =>
-    run(cfg.bashExe, ['-c', `export PATH="${winToPosix(path.dirname(cfg.nodeExe))}:$PATH"; ${script}`], { cwd: repo, timeoutMs }));
+    run(cfg.bashExe, bashCommand(cfg, script), { cwd: repo, timeoutMs }));
 
   async function gitOut(args) {
     const r = await runGit(args);
@@ -112,4 +122,4 @@ async function headSha(cfg) {
   return r.code === 0 ? r.stdout.trim() : '';
 }
 
-module.exports = { makeUpdater, headSha, defaultGitExe };
+module.exports = { makeUpdater, headSha, defaultGitExe, bashCommand };

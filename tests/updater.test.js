@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { runUpdateChain, winToPosix } = require('../update-lib.js');
-const { makeUpdater, defaultGitExe } = require('../updater.js');
+const { makeUpdater, defaultGitExe, bashCommand } = require('../updater.js');
 
 test('runUpdateChain: 全步骤成功返回 ok', async () => {
   const steps = [1, 2, 3].map((n) => ({ name: 's' + n, fn: async () => ({ ok: true }) }));
@@ -139,4 +139,13 @@ test('defaultGitExe: 探测不到时抛出带指引的错误', () => {
     () => defaultGitExe({ bashExe: path.join(root, 'usr', 'bin', 'bash.exe') }),
     /gitExe/,
   );
+});
+
+test('bashCommand: PATH 同时前置 node 目录与 Git usr\\bin', () => {
+  const args = bashCommand(
+    { nodeExe: 'D:\\Compile\\Node\\node.exe', bashExe: 'C:\\Program Files\\Git\\usr\\bin\\bash.exe' },
+    'corepack pnpm install',
+  );
+  assert.deepEqual(args[0], '-c');
+  assert.match(args[1], /^export PATH="\/d\/Compile\/Node:\/c\/Program Files\/Git\/usr\/bin:\$PATH"; corepack pnpm install$/);
 });
