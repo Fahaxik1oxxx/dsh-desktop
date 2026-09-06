@@ -106,32 +106,17 @@ function injectShellUI() {
       'z-index:2147483646;-webkit-app-region:drag;';
     band.addEventListener('dblclick', () => { if (window.dshWindow) window.dshWindow.toggleMaximize(); });
     document.body.appendChild(band);
-    if (!document.getElementById('dsh-shell-css')) {
-      const css = document.createElement('style');
-      css.id = 'dsh-shell-css';
-      css.textContent =
-        'button,input,textarea,select,a,[role="button"],[contenteditable="true"]{-webkit-app-region:no-drag}';
-      document.head.appendChild(css);
-    }
-    const placeSessionLog = () => {
-      const logBtn = [...document.querySelectorAll('button')].find((b) => {
-        const t = (b.textContent || '').replace(/\\s+/g, ' ').trim();
-        return t === 'Session log' || t === '会话日志' || t === 'Session 日志';
-      });
-      if (!logBtn) return;
-      const utilities = logBtn.parentElement;
-      const titleRow = utilities && utilities.parentElement;
-      if (!utilities || !titleRow) return;
-      const cluster = [...titleRow.children].find((el) => el !== utilities);
-      if (cluster) cluster.style.flex = '0 1 auto';
-      utilities.style.marginLeft = '12px';
-      utilities.style.marginRight = '0';
-    };
-    placeSessionLog();
-    if (!window.__dshHeaderWatch) {
-      window.__dshHeaderWatch = new MutationObserver(placeSessionLog);
-      window.__dshHeaderWatch.observe(document.body, { childList: true, subtree: true });
-    }
+    document.getElementById('dsh-shell-css')?.remove();
+    const css = document.createElement('style');
+    css.id = 'dsh-shell-css';
+    // 会话头 titleCluster 是 flex:1，会把 Session log 顶到最右。用结构选择器压掉
+    // 增长，让 utilities 紧挨「标准模式」；!important 避免被 CSS module 盖掉。
+    css.textContent =
+      'button,input,textarea,select,a,[role="button"],[contenteditable="true"]{-webkit-app-region:no-drag}' +
+      'header>div:first-of-type{justify-content:flex-start !important;}' +
+      'header>div:first-of-type>div:first-of-type{flex:0 1 auto !important;min-width:0 !important;}' +
+      'header>div:first-of-type>div:last-of-type{margin-left:12px !important;margin-right:0 !important;}';
+    document.head.appendChild(css);
     (${installWindowControls.toString()})(${maximized},${height},${controlWidth});
   })()`);
 }
