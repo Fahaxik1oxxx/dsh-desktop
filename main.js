@@ -35,27 +35,25 @@ let server = null;
 let updater = null;
 let quitting = false;
 
-// 自绘窗口控制按钮几何（对齐 ZCode/VS Code：46×36 透明按钮）。
-// 标题栏单独占 36px，页面整体下移，避免与应用右上角 Session log 等控件重叠。
-const TITLEBAR_HEIGHT = 36;
+// 自绘窗口控制：叠在右栏顶上，不另开一栏（对齐 ZCode 左右两栏）。
+const CONTROL_HEIGHT = 36;
 const CONTROL_WIDTH = 138;
+const DRAG_HEIGHT = 12; // 会话头 padding-top，不挡住标题和 Session log
 
 /**
- * 注入到页面的自绘窗口控制按钮（对齐 ZCode/VS Code 式标题栏：按钮无底色、细线图标、
- * 关闭键悬停红底白字）。本函数会被序列化后在渲染端执行，只能引用 DOM/window。
+ * 注入到页面的自绘窗口控制按钮。本函数会被序列化后在渲染端执行，只能引用 DOM/window。
  * @param {boolean} initialMaximized
- * @param {number} titlebarHeight
+ * @param {number} controlHeight
  * @param {number} controlWidth
  */
-function installWindowControls(initialMaximized, titlebarHeight, controlWidth) {
+function installWindowControls(initialMaximized, controlHeight, controlWidth) {
   if (document.getElementById('dsh-win-controls') || !window.dshWindow) return;
-  const host = document.getElementById('dsh-titlebar') || document.body;
   const strip = document.createElement('div');
   strip.id = 'dsh-win-controls';
-  strip.style.cssText = 'position:absolute;top:0;right:0;width:' + controlWidth + 'px;height:' + titlebarHeight + 'px;display:flex;-webkit-app-region:no-drag;color:#4a4f57;';
+  strip.style.cssText = 'position:fixed;top:0;right:0;width:' + controlWidth + 'px;height:' + controlHeight + 'px;z-index:2147483647;display:flex;-webkit-app-region:no-drag;color:#4a4f57;';
   const style = document.createElement('style');
   style.textContent =
-    '.dsh-wc{flex:1 1 0;height:' + titlebarHeight + 'px;border:0;padding:0;margin:0;background:transparent;color:inherit;' +
+    '.dsh-wc{flex:1 1 0;height:' + controlHeight + 'px;border:0;padding:0;margin:0;background:transparent;color:inherit;' +
     'display:flex;align-items:center;justify-content:center;border-radius:0;box-shadow:none;font:inherit;}' +
     '.dsh-wc:hover{background:rgba(0,0,0,0.055);}' +
     '.dsh-wc:active{background:rgba(0,0,0,0.1);}' +
@@ -89,32 +87,49 @@ function installWindowControls(initialMaximized, titlebarHeight, controlWidth) {
   strip.appendChild(minB);
   strip.appendChild(maxB);
   strip.appendChild(closeB);
-  host.appendChild(strip);
+  document.body.appendChild(strip);
 }
 
 function injectShellUI() {
   if (!win || win.isDestroyed()) return;
-  const height = TITLEBAR_HEIGHT;
+  const height = CONTROL_HEIGHT;
   const controlWidth = CONTROL_WIDTH;
+  const dragHeight = DRAG_HEIGHT;
   const maximized = win.isMaximized();
   win.webContents.executeJavaScript(`(() => {
-    if (!document.getElementById('dsh-titlebar')) {
-      const bar = document.createElement('div');
-      bar.id = 'dsh-titlebar';
-      bar.style.cssText = 'flex:0 0 ${height}px;height:${height}px;position:relative;z-index:2147483646;' +
-        '-webkit-app-region:drag;background:#ffffff;border-bottom:1px solid #eceef1;';
-      bar.addEventListener('dblclick', () => { if (window.dshWindow) window.dshWindow.toggleMaximize(); });
-      document.body.insertBefore(bar, document.body.firstChild);
-    }
-    if (!document.getElementById('dsh-shell-pad')) {
+    document.getElementById('dsh-titlebar')?.remove();
+    document.getElementById('dsh-shell-pad')?.remove();
+    document.getElementById('dsh-drag-band')?.remove();
+    const band = document.createElement('div');
+    band.id = 'dsh-drag-band';
+    band.style.cssText = 'position:fixed;top:0;left:0;right:${controlWidth}px;height:${dragHeight}px;' +
+      'z-index:2147483646;-webkit-app-region:drag;';
+    band.addEventListener('dblclick', () => { if (window.dshWindow) window.dshWindow.toggleMaximize(); });
+    document.body.appendChild(band);
+    if (!document.getElementById('dsh-shell-css')) {
       const css = document.createElement('style');
-      css.id = 'dsh-shell-pad';
+      css.id = 'dsh-shell-css';
       css.textContent =
-        'html,body{height:100%;margin:0;overflow:hidden;}' +
-        'body{display:flex;flex-direction:column;}' +
-        '#root,#app{flex:1 1 auto;min-height:0;position:relative;transform:translateZ(0);}' +
         'button,input,textarea,select,a,[role="button"],[contenteditable="true"]{-webkit-app-region:no-drag}';
       document.head.appendChild(css);
+    }
+    const shiftSessionLog = () => {
+      const nodes = document.querySelectorAll('button');
+      for (const b of nodes) {
+        const t = (b.textContent || '').replace(/\\s+/g, ' ').trim();
+        if (t === 'Session log' || t === '会话日志') {
+          const host = b.parentElement;
+          if (host && !host.dataset.dshShifted) {
+            host.dataset.dshShifted = '1';
+            host.style.marginRight = '${controlWidth}px';
+          }
+        }
+      }
+    };
+    shiftSessionLog();
+    if (!window.__dshHeaderWatch) {
+      window.__dshHeaderWatch = new MutationObserver(shiftSessionLog);
+      window.__dshHeaderWatch.observe(document.body, { childList: true, subtree: true });
     }
     (${installWindowControls.toString()})(${maximized},${height},${controlWidth});
   })()`);
