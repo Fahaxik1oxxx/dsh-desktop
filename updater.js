@@ -5,6 +5,7 @@ const path = require('node:path');
 const { run } = require('./proc.js');
 const { hasTrackedChanges, isBehind, lockfileChanged, ffPossible } = require('./gitup.js');
 const { runUpdateChain, winToPosix } = require('./update-lib.js');
+const { selectBuildCommand } = require('./update-build.js');
 
 /**
  * 解析 git.exe：优先显式 cfg.gitExe；否则从 bashExe 推导，按 Git for Windows 的
@@ -37,39 +38,56 @@ function bashCommand(cfg, script) {
   return ['-c', `export PATH="${pathPre}:$PATH"; ${script}`];
 }
 
+/** 把子进程块输出拆成行再交给 onProgress。 */
+function linePump(onProgress) {
+  let buf = '';
+  return (chunk) => {
+    buf += String(chunk);
+    const parts = buf.split(/\r?\n/);
+    buf = parts.pop() || '';
+    for (const line of parts) {
+      const t = line.replace(/\r/g, '').trim();
+      if (t) onProgress(t);
+    }
+  };
+}
+
 function makeUpdater(cfg, deps = {}) {
   const repo = cfg.repo;
   // 惰性解析：注入 deps.runGit 的单测不触发文件探测，配置问题在首次真实调用时暴露
   const gitExe = () => deps.gitExe || defaultGitExe(cfg);
-  // runGit: (args) -> {code,stdout,stderr}，真实调用走 git.exe
-  const runGit = deps.runGit || ((args) => run(gitExe(), args, { cwd: repo, timeoutMs: 900000 }));
-  // runBash: (script, {timeoutMs}) -> {code,stdout,stderr}，真实调用经 bash -c + 显式 PATH
-  const runBash = deps.runBash || ((script, { timeoutMs = 1800000 } = {}) =>
-    run(cfg.bashExe, bashCommand(cfg, script), { cwd: repo, timeoutMs }));
+  // runGit: (args, opts?) -> {code,stdout,stderr}
+  const runGit = deps.runGit || ((args, opts = {}) => run(gitExe(), args, { cwd: repo, timeoutMs: 900000, onOut: opts.onOut }));
+  // runBash: (script, {timeoutMs, onOut}) -> {code,stdout,stderr}
+  const runBash = deps.runBash || ((script, { timeoutMs = 1800000, onOut } = {}) =>
+    run(cfg.bashExe, bashCommand(cfg, script), { cwd: repo, timeoutMs, onOut }));
 
   async function gitOut(args) {
     const r = await runGit(args);
     return r.stdout.trim();
   }
 
+  const stripGit = (args) => (args[0] === 'git' ? args.slice(1) : args);
+
   /** fetch 远端并比对本地 HEAD。网络失败返回 reachable:false；无法快进时 diverged:true。 */
   async function checkForUpdate() {
-    const f = await runBash(`git -C "${winToPosix(repo)}" fetch origin master 2>&1`, { timeoutMs: 240000 });
+    const f = await runGit(['fetch', '--prune', '--no-tags', 'origin', 'master']);
     if (f.code !== 0) return { reachable: false, ahead: false, diverged: false, localSha: null, remoteSha: null, error: (f.stderr || f.stdout).slice(0, 400) };
     const localSha = await gitOut(['rev-parse', 'HEAD']);
     const remoteSha = await gitOut(['rev-parse', 'FETCH_HEAD']);
-    // ffPossible 的 runFn 约定收带 'git' 前缀的参数；runGit 收不带前缀的，这里剥离。
-    const ff = await ffPossible(repo, (args) => runGit(args[0] === 'git' ? args.slice(1) : args));
+    const ff = await ffPossible(repo, (args) => runGit(stripGit(args)));
     return { reachable: true, ahead: isBehind(localSha, remoteSha), diverged: !ff, localSha, remoteSha };
   }
 
   /**
-   * 执行更新链：pre 取当前 sha → dirty 检查 → ff 检查 → pull --ff-only →
-   * 若 lockfile 变化则 pnpm install → npm run build → 返回新 sha。
-   * onProgress(line) 可选，接收每步输出尾部。
+   * 执行更新链：dirty 检查 → ff 检查 → merge --ff-only FETCH_HEAD →
+   * 若 lockfile 变化则 pnpm install → 按变更文件选最短构建 → 返回新 sha。
+   * 检测阶段已经 fetch 过，这里只做本地快进，避免再走一遍网络。
+   * onProgress(line) 可选，接收每步输出。
    */
   async function applyUpdate(onProgress = () => {}) {
     const state = {};
+    const onOut = linePump(onProgress);
     const steps = [
       { name: 'read-head', fn: async () => { state.preSha = await gitOut(['rev-parse', 'HEAD']); return { ok: true }; } },
       { name: 'dirty-check', fn: async () => {
@@ -84,26 +102,27 @@ function makeUpdater(cfg, deps = {}) {
             ? { ok: true }
             : { ok: false, reason: '本地与远端已分叉，无法 fast-forward，需手动处理' };
       } },
-      { name: 'pull', fn: async () => {
-          const p = await runGit(['pull', '--ff-only', 'origin', 'master']);
-          onProgress((p.stdout || '').trim().split('\n').pop() || 'pull');
-          return p.code === 0 ? { ok: true } : { ok: false, reason: 'git pull 失败：' + (p.stderr || p.stdout).slice(0, 400) };
+      { name: 'merge', fn: async () => {
+          onProgress('快进合并 FETCH_HEAD …');
+          const p = await runGit(['merge', '--ff-only', 'FETCH_HEAD'], { onOut });
+          if (p.code !== 0) return { ok: false, reason: 'git merge 失败：' + (p.stderr || p.stdout).slice(0, 400) };
+          return { ok: true };
       } },
       { name: 'install-if-needed', fn: async () => {
-          // lockfileChanged 的 runFn 收带 'git' 前缀的参数；runGit 收不带前缀的，这里剥离。
-          const runGitFromLock = (args) => runGit(args[0] === 'git' ? args.slice(1) : args);
-          const changed = await lockfileChanged(repo, runGitFromLock, state.preSha, 'HEAD');
+          const changed = await lockfileChanged(repo, (args) => runGit(stripGit(args)), state.preSha, 'HEAD');
           if (!changed) { onProgress('依赖未变化，跳过 pnpm install'); return { ok: true }; }
           onProgress('依赖变化，运行 pnpm install …');
-          const i = await runBash('cd "' + winToPosix(repo) + '" && corepack pnpm install --config.confirmModulesPurge=false 2>&1');
-          onProgress((i.stdout || i.stderr || '').trim().split('\n').pop() || 'pnpm install');
+          const i = await runBash('cd "' + winToPosix(repo) + '" && corepack pnpm install --config.confirmModulesPurge=false 2>&1', { onOut });
           return i.code === 0 ? { ok: true } : { ok: false, reason: 'pnpm install 失败：' + (i.stderr || i.stdout).slice(0, 500) };
       } },
       { name: 'build', fn: async () => {
-          onProgress('运行完整构建 npm run build …');
-          const b = await runBash('cd "' + winToPosix(repo) + '" && npm run build 2>&1');
+          const diff = await runGit(['diff', '--name-only', state.preSha, 'HEAD']);
+          const files = diff.code === 0 ? diff.stdout.split(/\r?\n/) : [];
+          const cmd = selectBuildCommand(files);
+          if (!cmd) { onProgress('无需重建前端/库，跳过构建'); return { ok: true }; }
+          onProgress('运行 ' + cmd + ' …');
+          const b = await runBash('cd "' + winToPosix(repo) + '" && ' + cmd + ' 2>&1', { onOut });
           const tail = (b.stdout || b.stderr || '').trim().split('\n').slice(-3).join('\n');
-          onProgress(tail);
           return b.code === 0 ? { ok: true } : { ok: false, reason: '构建失败：\n' + tail.slice(0, 600) };
       } },
     ];

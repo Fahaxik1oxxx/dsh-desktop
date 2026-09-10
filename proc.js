@@ -17,17 +17,22 @@ function killTree(child) {
 /**
  * @param {string} exe 可执行文件路径
  * @param {string[]} args 参数数组
- * @param {{cwd?:string, env?:NodeJS.ProcessEnv, timeoutMs?:number}} opts
+ * @param {{cwd?:string, env?:NodeJS.ProcessEnv, timeoutMs?:number, onOut?:(chunk:string)=>void}} opts
  * @returns {Promise<{code:number|null, stdout:string, stderr:string}>}
  */
-function run(exe, args, { cwd, env, timeoutMs = 300000 } = {}) {
+function run(exe, args, { cwd, env, timeoutMs = 300000, onOut } = {}) {
   return new Promise((resolve) => {
     const child = spawn(exe, args, { cwd, env, windowsHide: true, shell: false });
     let stdout = '';
     let stderr = '';
     const t = setTimeout(() => killTree(child), timeoutMs);
-    child.stdout.on('data', (d) => (stdout += d));
-    child.stderr.on('data', (d) => (stderr += d));
+    const take = (d) => {
+      const s = d.toString();
+      if (onOut) onOut(s);
+      return s;
+    };
+    child.stdout.on('data', (d) => { stdout += take(d); });
+    child.stderr.on('data', (d) => { stderr += take(d); });
     child.on('error', (e) => {
       clearTimeout(t);
       resolve({ code: -1, stdout, stderr: e.message });

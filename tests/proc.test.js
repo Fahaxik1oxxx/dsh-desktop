@@ -2,6 +2,16 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { run } = require('../proc.js');
 
+test('run: onOut 按块转发 stdout', async () => {
+  const chunks = [];
+  const res = await run(process.execPath, ['-e', "process.stdout.write('hello\\nworld\\n')"], {
+    timeoutMs: 5000,
+    onOut: (s) => chunks.push(s),
+  });
+  assert.equal(res.code, 0);
+  assert.equal(chunks.join(''), 'hello\nworld\n');
+});
+
 test('run: 超时后终止子进程并返回结果', async () => {
   // 兜底守卫：若 kill 失效 run() 永不返回，10s 后拒绝；finally 里清除，避免拖住事件循环
   let bail;

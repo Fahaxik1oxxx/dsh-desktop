@@ -15,8 +15,12 @@ ipcMain.handle('dsh-window:toggle-maximize', () => {
   if (win.isMaximized()) win.unmaximize(); else win.maximize();
 });
 ipcMain.handle('dsh-window:close', () => { if (win && !win.isDestroyed()) win.close(); }); // 走既有关窗到托盘逻辑
+ipcMain.handle('dsh-update:state', () => updateState);
+ipcMain.handle('dsh-update:apply', () => applyAvailableUpdate());
+ipcMain.handle('dsh-update:dismiss', () => { dismissUpdate(); return updateState; });
 
 const LOG = path.join(__dirname, 'app.log');
+const SHELL_UPDATE_JS = fs.readFileSync(path.join(__dirname, 'shell-update.js'), 'utf8');
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -118,45 +122,15 @@ function injectShellUI() {
       'header>div:first-of-type>div:last-of-type{margin-left:12px !important;margin-right:0 !important;}';
     document.head.appendChild(css);
     (${installWindowControls.toString()})(${maximized},${height},${controlWidth});
-  })()`);
+  })()`).then(() => {
+    if (!win || win.isDestroyed()) return;
+    return win.webContents.executeJavaScript(SHELL_UPDATE_JS);
+  }).catch(() => { /* 页面已卸载或尚未就绪 */ });
 }
 
 const LOADING_HTML = '<html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#ffffff;color:#4a4f57">' +
   '<div style="font-size:20px;font-weight:600">DeepSeek Harness</div>' +
   '<div style="margin-top:12px;font-size:13px;opacity:.75">正在启动服务…</div></body></html>';
-
-const PROGRESS_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>' +
-  'body{margin:0;font:12px/1.6 Consolas,monospace;background:#1e1f22;color:#d6d9de;display:flex;flex-direction:column}' +
-  'h4{margin:10px 14px 6px;font:600 13px system-ui,sans-serif;color:#fff}' +
-  '#log{flex:1;margin:0 14px 12px;overflow:auto;white-space:pre-wrap;word-break:break-all}' +
-  '</style></head><body><h4>更新中：git 拉取 + 完整重建，完成后界面自动恢复…</h4><pre id="log"></pre></body></html>';
-
-let progressWin = null;
-
-function ensureProgressWindow() {
-  if (progressWin && !progressWin.isDestroyed()) return progressWin;
-  progressWin = new BrowserWindow({
-    width: 560,
-    height: 220,
-    show: false,
-    autoHideMenuBar: true,
-    maximizable: false,
-    title: '更新中',
-    webPreferences: { contextIsolation: true },
-  });
-  progressWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(PROGRESS_HTML));
-  progressWin.once('ready-to-show', () => { if (progressWin && !progressWin.isDestroyed()) progressWin.show(); });
-  progressWin.on('closed', () => { progressWin = null; });
-  return progressWin;
-}
-
-function progressLine(text) {
-  if (!progressWin || progressWin.isDestroyed()) return;
-  // 文本以 JSON 字符串字面量注入，构建输出里的引号/反斜杠不会破坏脚本
-  progressWin.webContents.executeJavaScript(
-    `(() => { const el = document.getElementById('log'); el.textContent += ${JSON.stringify(String(text) + '\n')}; el.scrollTop = el.scrollHeight; })()`
-  ).catch(() => { /* 窗口已被用户关闭，忽略 */ });
-}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -315,10 +289,64 @@ async function refreshTrayTooltip() {
 }
 
 let updateBusy = false;
+let updateState = { status: 'idle', localSha: null, remoteSha: null, step: '', log: '', error: '' };
+
+function pushUpdateState() {
+  if (win && !win.isDestroyed()) win.webContents.send('dsh-update:state', updateState);
+}
+
+function setUpdateState(patch) {
+  updateState = { ...updateState, ...patch };
+  pushUpdateState();
+}
+
+function appendUpdateLog(line) {
+  const prev = updateState.log ? updateState.log.split('\n') : [];
+  prev.push(line);
+  setUpdateState({ log: prev.slice(-80).join('\n'), step: line });
+}
+
+function dismissUpdate() {
+  if (updateState.status === 'applying') return;
+  if (updateState.status === 'failed' && updateState.remoteSha) {
+    setUpdateState({ status: 'available', step: '', error: '' });
+    return;
+  }
+  setUpdateState({ status: 'idle', step: '', log: '', error: '' });
+}
+
+async function applyAvailableUpdate() {
+  if (updateBusy) return { ok: false, reason: 'busy' };
+  if (!updater) updater = makeUpdater(cfg);
+  updateBusy = true;
+  setUpdateState({ status: 'applying', step: '开始更新…', log: '', error: '' });
+  try {
+    log('apply update start');
+    const r = await updater.applyUpdate((line) => {
+      log('update: ' + line);
+      appendUpdateLog(line);
+    }).catch((e) => ({ ok: false, reason: e.message, at: 'applyUpdate' }));
+    if (r.ok) {
+      log('update done to ' + r.sha);
+      setUpdateState({ status: 'idle', localSha: r.sha, remoteSha: r.sha, step: '', log: '', error: '' });
+      new Notification({ title: '更新完成', body: '已更新到 ' + short(r.sha) + '，正在重启服务…' }).show();
+      if (server) { try { await server.stop(); } catch { /* ignore */ } }
+      await bootServer();
+      refreshTrayTooltip();
+      return { ok: true, sha: r.sha };
+    }
+    const err = (r.reason || '未知原因') + (r.at ? ' [' + r.at + ']' : '');
+    log('update failed: ' + err);
+    setUpdateState({ status: 'failed', error: err });
+    return { ok: false, reason: err };
+  } finally {
+    updateBusy = false;
+  }
+}
 
 async function runUpdateCheck(manual = false) {
   // 检查与更新链不可重入：自动定时、启动首查、托盘手动可能重叠，并发跑 git/pnpm 会互相踩。
-  if (updateBusy) {
+  if (updateBusy || updateState.status === 'applying') {
     if (manual) new Notification({ title: '检查更新', body: '已有检查/更新在进行中，请稍候' }).show();
     return;
   }
@@ -337,38 +365,14 @@ async function runUpdateCheck(manual = false) {
       return;
     }
     if (!info.ahead) {
+      setUpdateState({ status: 'idle', localSha: info.localSha, remoteSha: info.remoteSha, step: '', log: '', error: '' });
       if (manual) new Notification({ title: '检查更新', body: '已是最新版本 ' + short(info.localSha) }).show();
       return;
     }
-    new Notification({ title: '发现新版本', body: `${short(info.localSha)} → ${short(info.remoteSha)}` }).show();
-    const choice = await dialog.showMessageBox({
-      type: 'question',
-      buttons: ['更新', '稍后'],
-      defaultId: 0,
-      cancelId: 1,
-      message: '发现新版本',
-      detail: `本地 ${short(info.localSha)}\n远端 ${short(info.remoteSha)}\n\n确认后将自动 git 拉取 + 重建并重启，界面可能短暂不可用。若工作区有未提交改动会中止更新。`,
-    });
-    if (choice.response !== 0) return;
-    new Notification({ title: '正在更新', body: 'git 拉取 + 完整重建中，请稍候…' }).show();
-    log('apply update start');
-    ensureProgressWindow();
-    const onProgress = (line) => {
-      log('update: ' + line);
-      for (const l of String(line).split('\n')) if (l.trim() !== '') progressLine(l);
-    };
-    const r = await updater.applyUpdate(onProgress).catch((e) => ({ ok: false, reason: e.message, at: 'applyUpdate' }));
-    if (r.ok) {
-      if (progressWin && !progressWin.isDestroyed()) progressWin.close();
-      log('update done to ' + r.sha);
-      new Notification({ title: '更新完成', body: '已更新到 ' + short(r.sha) + '，正在重启服务…' }).show();
-      if (server) { try { await server.stop(); } catch { /* ignore */ } }
-      await bootServer();
-      refreshTrayTooltip();
-    } else {
-      // 失败时保留进度窗口，让用户能看到最后一段构建输出再关闭
-      log('update failed: ' + (r.reason || '') + ' at ' + (r.at || '?'));
-      dialog.showErrorBox('更新失败', (r.reason || '未知原因') + (r.at ? '\n[阶段：' + r.at + ']' : ''));
+    const already = updateState.status === 'available' && updateState.remoteSha === info.remoteSha;
+    setUpdateState({ status: 'available', localSha: info.localSha, remoteSha: info.remoteSha, step: '', log: '', error: '' });
+    if (!already) {
+      new Notification({ title: '发现新版本', body: `${short(info.localSha)} → ${short(info.remoteSha)}，点击设置旁的「更新」` }).show();
     }
   } finally {
     updateBusy = false;

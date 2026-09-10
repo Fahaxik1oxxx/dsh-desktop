@@ -45,7 +45,7 @@ test('applyUpdate: 有 tracked 改动时在 dirty-check 中止且不执行 pull'
   const runGit = fakeGit([
     [['rev-parse', 'HEAD'], { code: 0, stdout: 'oldsha\n', stderr: '' }],
     [['status', '--porcelain', '--untracked-files=no'], { code: 0, stdout: ' M apps/cli/src/x.ts\n', stderr: '' }],
-    [['pull', '--ff-only', 'origin', 'master'], () => { pullCalled = true; return { code: 0, stdout: '', stderr: '' }; }],
+    [['merge', '--ff-only', 'FETCH_HEAD'], () => { pullCalled = true; return { code: 0, stdout: '', stderr: '' }; }],
   ]);
   const u = makeUpdater({ repo: 'D:\\AI\\DSH', bashExe: 'C:\\x\\bash.exe' }, { runGit, runBash: async () => ({ code: 0, stdout: '', stderr: '' }) });
   const res = await u.applyUpdate();
@@ -63,19 +63,48 @@ test('applyUpdate: 干净+可快进+无依赖变化时走完整链路成功', as
       if (a === 'rev-parse') return { code: 0, stdout: 'newsha\n', stderr: '' };
       if (a === 'status') return { code: 0, stdout: '', stderr: '' };
       if (a === 'merge-base') return { code: 0, stdout: '', stderr: '' };
-      if (a === 'pull') return { code: 0, stdout: '', stderr: '' };
-      if (a === 'diff') return { code: 0, stdout: '', stderr: '' }; // 无 lockfile 变化
+      if (a === 'merge') return { code: 0, stdout: '', stderr: '' };
+      if (a === 'diff') {
+        if (args.includes('pnpm-lock.yaml')) return { code: 0, stdout: '', stderr: '' };
+        return { code: 0, stdout: 'packages/client/ui-chat/src/index.ts\n', stderr: '' };
+      }
       return { code: 0, stdout: '', stderr: '' };
     }],
   ]);
-  let built = false;
-  const runBash = async () => { built = true; return { code: 0, stdout: 'done\n', stderr: '' }; };
+  const bash = [];
+  const runBash = async (script) => { bash.push(script); return { code: 0, stdout: 'done\n', stderr: '' }; };
   const u = makeUpdater({ repo: 'D:\\AI\\DSH', bashExe: 'C:\\x\\bash.exe' }, { runGit, runBash });
   const res = await u.applyUpdate();
   assert.equal(res.ok, true);
   assert.equal(res.sha, 'newsha');
-  assert.ok(calls.includes('pull'));
-  assert.equal(built, true);
+  assert.ok(calls.includes('merge'));
+  assert.equal(bash.length, 1);
+  assert.match(bash[0], /npm run build:web/);
+});
+
+test('applyUpdate: 仅文档变更时跳过构建', async () => {
+  const runGit = fakeGit([
+    [[], (args) => {
+      const a = args[0];
+      if (a === 'rev-parse') return { code: 0, stdout: 'newsha\n', stderr: '' };
+      if (a === 'status') return { code: 0, stdout: '', stderr: '' };
+      if (a === 'merge-base') return { code: 0, stdout: '', stderr: '' };
+      if (a === 'merge') return { code: 0, stdout: '', stderr: '' };
+      if (a === 'diff') {
+        if (args.includes('pnpm-lock.yaml')) return { code: 0, stdout: '', stderr: '' };
+        return { code: 0, stdout: 'README.md\n', stderr: '' };
+      }
+      return { code: 0, stdout: '', stderr: '' };
+    }],
+  ]);
+  let built = false;
+  const u = makeUpdater({ repo: 'D:\\AI\\DSH', bashExe: 'C:\\x\\bash.exe' }, {
+    runGit,
+    runBash: async () => { built = true; return { code: 0, stdout: '', stderr: '' }; },
+  });
+  const res = await u.applyUpdate();
+  assert.equal(res.ok, true);
+  assert.equal(built, false);
 });
 
 function checkUpdater(runGitHandlers) {

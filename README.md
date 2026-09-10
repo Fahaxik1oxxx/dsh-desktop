@@ -16,7 +16,7 @@ deepseek-harness/            ← 上游仓库的干净克隆（保持可 fast-fo
 
 - 主进程 spawn 本地 node 服务器（`node apps/cli/lib/bin.js web --no-open`，默认 127.0.0.1:3080），从启动输出解析本进程带 token 的 URL 后只在 Electron 窗口加载；`--no-open` 关掉上游默认的系统浏览器跳转。启动前预检端口占用，被别的程序占了会直接报明确原因。布局保持左右两栏、不另开顶栏：最小化/最大化/关闭叠在右栏右上角，Session log 放在「标准模式」标签右侧。
 - 服务就绪后进入看护：进程意外退出自动重启（最多 5 次），主动停止/退出应用不会误触发。
-- 更新器每 `checkIntervalMs`（默认 30 分钟）经 Git Bash 执行 `git fetch` 比对远端；检测到新版本且用户确认后：`git pull --ff-only` → 依赖变化时 `corepack pnpm install` → `npm run build` → 重启服务器，全程在进度窗口显示构建输出；本地已分叉时直接提示手动处理，不再弹确认框。
+- 更新器每 `checkIntervalMs`（默认 30 分钟）用 `git fetch` 比对远端。发现新版本时，侧栏「设置」旁出现「更新」按钮（通知栏也会提示，不再弹阻塞对话框）。点「更新」后：本地 `git merge --ff-only FETCH_HEAD` → 依赖变化时 `corepack pnpm install` → 按变更文件选最短构建（仅文档跳过；仅 web/client 走 `pnpm run build:web`；含 native 才跑完整 `npm run build`）→ 重启服务器。进度叠在主窗口右下角。本地已分叉时直接提示手动处理。
 - 外层克隆只允许 fast-forward：工作区有 tracked 改动或本地已分叉时更新中止，不会覆盖任何本地内容。
 - 网页里新开的链接交给系统浏览器；托盘支持 显示/隐藏、重启服务器、在浏览器打开、打开日志、检查更新，tooltip 带当前仓库 HEAD。
 
