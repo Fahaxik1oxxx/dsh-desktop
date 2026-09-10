@@ -6,7 +6,7 @@ const path = require('node:path');
 /** 校验并返回配置对象；任何一项不满足即抛出带字段名的 Error。 */
 function loadConfig(file) {
   const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
-  for (const k of ['repo', 'nodeExe', 'bashExe', 'url', 'icon']) {
+  for (const k of ['repo', 'nodeExe', 'bashExe', 'url']) {
     if (typeof cfg[k] !== 'string' || cfg[k].length === 0) {
       throw new Error(`config: ${k} 必须是非空字符串`);
     }
@@ -29,6 +29,14 @@ function loadConfig(file) {
   }
   if (cfg.gitExe !== undefined && (typeof cfg.gitExe !== 'string' || cfg.gitExe.length === 0)) {
     throw new Error('config: gitExe 必须是非空字符串');
+  }
+  const configDir = path.dirname(path.resolve(file));
+  if (cfg.icon === undefined || cfg.icon === '') {
+    cfg.icon = path.join(configDir, 'assets', 'deepseek.ico');
+  } else if (typeof cfg.icon !== 'string') {
+    throw new Error('config: icon 必须是字符串类型');
+  } else if (!path.isAbsolute(cfg.icon)) {
+    cfg.icon = path.resolve(configDir, cfg.icon);
   }
   if (!fs.existsSync(cfg.repo) || !fs.statSync(cfg.repo).isDirectory()) {
     throw new Error(`config: repo 必须指向已存在的目录: ${cfg.repo}`);

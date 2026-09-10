@@ -1,5 +1,4 @@
 // gitup.js — git 更新判定的纯逻辑。runFn 约定：(argsArray, repo) -> Promise<{code, stdout, stderr}>
-const { run } = require('./proc.js');
 
 /** porcelain 文本里，任一行（非空、不以 ?? 开头）即代表有 tracked 改动。 */
 function hasTrackedChanges(porcelainText) {
@@ -23,9 +22,4 @@ async function ffPossible(repo, runFn) {
   return r.code === 0;
 }
 
-/** 通用包装：把 (argsArray, repo) 映射为真实 git 调用（供非测试场景使用）。 */
-async function gitRun(repo, argsArray) {
-  return run('git', argsArray, { cwd: repo });
-}
-
-module.exports = { hasTrackedChanges, isBehind, lockfileChanged, ffPossible, gitRun };
+module.exports = { hasTrackedChanges, isBehind, lockfileChanged, ffPossible };

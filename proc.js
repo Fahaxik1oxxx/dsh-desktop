@@ -39,4 +39,4 @@ function run(exe, args, { cwd, env, timeoutMs = 300000 } = {}) {
   });
 }
 
-module.exports = { run, killTree };
+module.exports = { run };

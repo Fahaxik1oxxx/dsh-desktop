@@ -3,11 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "description": "DeepSeek Harness desktop shell (Electron)",
+  "license": "MIT",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test",
+    "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set-shortcut.ps1",
     "postinstall": "node -e \"if(process.platform!=='win32')process.exit(0);require('node:child_process').spawnSync('cmd.exe',['/c',require('node:path').join('scripts','stamp-desktop-exe.cmd')],{stdio:'inherit',windowsHide:true})\""
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Fahaxik1oxxx/dsh-desktop.git"
   },
   "devDependencies": {
     "electron": "^44.1.1",

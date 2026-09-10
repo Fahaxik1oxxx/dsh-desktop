@@ -1,5 +1,5 @@
 // server-smoke.js — 非 GUI 冒烟：拉起真实 dsh 服务器，等 3080 就绪，停掉后断言端口已释放。
-// 运行：D:\Compile\Node\node.exe scripts/server-smoke.js
+// 运行：node scripts/server-smoke.js
 const path = require('node:path');
 const net = require('node:net');
 const { startServer } = require('../server.js');

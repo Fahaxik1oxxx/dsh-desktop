@@ -9,6 +9,9 @@
 ```
 deepseek-harness/            ← 上游仓库的干净克隆（保持可 fast-forward）
   └─ desktop/                ← 本仓库（独立 git 仓库，嵌套在外层克隆内）
+       assets/               窗口 / 托盘 / 任务栏图标
+       scripts/              盖章 exe、快捷方式、冒烟测试
+       tests/                单元测试
 ```
 
 - 主进程 spawn 本地 node 服务器（`node apps/cli/lib/bin.js web --no-open`，默认 127.0.0.1:3080），从启动输出解析本进程带 token 的 URL 后只在 Electron 窗口加载；`--no-open` 关掉上游默认的系统浏览器跳转。启动前预检端口占用，被别的程序占了会直接报明确原因。布局保持左右两栏、不另开顶栏：最小化/最大化/关闭叠在右栏右上角，Session log 放在「标准模式」标签右侧。
@@ -51,7 +54,7 @@ cp config.example.json config.json
 npm start
 ```
 
-已经有构建好的上游克隆的话，从第 3 步开始即可。
+已经有构建好的上游克隆的话，从第 3 步开始即可。若把本仓库放在上游克隆的 `desktop/` 下，记得让外层 git 忽略该目录（例如 `.git/info/exclude` 加一行 `desktop/`），以免污染上游工作区。
 
 编辑 `config.json`（已被 gitignore，按机器填写，代码不硬编码任何路径）：
 
@@ -63,23 +66,31 @@ npm start
 | `gitExe` | 可选，git.exe 绝对路径；缺省时从 `bashExe` 按 Git for Windows 各目录布局自动推导（新版安装通常在 `cmd\git.exe`） |
 | `serverArgs` | 传给 node 的服务器入口参数，默认 `["apps/cli/lib/bin.js", "web", "--no-open"]`（`--no-open` 禁止上游打开系统浏览器） |
 | `port` / `url` | 服务器端口与加载地址 |
-| `icon` | 窗口/托盘图标路径（可用上游仓库或自备 `.ico`） |
+| `icon` | 可选，窗口/托盘图标；相对路径相对 `config.json`。省略则用本仓库 `assets/deepseek.ico` |
 | `checkIntervalMs` | 更新检测间隔，毫秒 |
 | `autoStart` | 可选，开机自启（Windows 登录项），默认 `false` |
 | `hotkey` | 可选，全局呼出/隐藏窗口快捷键如 `Alt+Shift+D`；缺省或空字符串关闭 |
 
 Electron 下载慢可设镜像：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
-Windows 任务栏按可执行文件名分组：直接跑 `electron.exe` 永远是 Electron 默认图标。`npm install` 会复制并盖章 `DeepSeekHarness.exe`；请用桌面快捷方式或 `start-desktop.cmd` 启动。若任务栏仍钉着旧的 Electron 图标，先取消固定，再从新快捷方式打开并重新固定。
+Windows 任务栏按可执行文件名分组：直接跑 `electron.exe` 永远是 Electron 默认图标。`npm install` 会复制并盖章 `DeepSeekHarness.exe`；请用桌面快捷方式或 `start-desktop.cmd` 启动。创建/刷新快捷方式：
+
+```sh
+npm run shortcut
+```
+
+若任务栏仍钉着旧的 Electron 图标，先取消固定，再从新快捷方式打开并重新固定。
 
 ## 开发与测试
 
 ```sh
-node --test          # 单元测试（更新编排、路径转换、git 判定）
-node scripts/server-smoke.js   # 非 GUI 冒烟：拉起真实服务器等 3080 就绪，停掉后断言端口释放
+npm test                         # 单元测试（更新编排、路径转换、git 判定、配置校验）
+node scripts/server-smoke.js     # 非 GUI 冒烟：拉起真实服务器等 3080 就绪，停掉后断言端口释放
 ```
 
 PATH 里没有 node 时，用绝对路径运行，例如 `"D:\Compile\Node\node.exe" --test`。
+
+架构说明见 [DESIGN.md](DESIGN.md)。
 
 ## License
 
