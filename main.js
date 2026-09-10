@@ -6,6 +6,7 @@ const { startServer, waitForPort } = require('./server.js');
 const { makeUpdater, headSha } = require('./updater.js');
 const { loadConfig } = require('./config-lib.js');
 const { parseDshWebUrl } = require('./web-url.js');
+const { shellLayoutCss } = require('./shell-layout.js');
 
 const cfg = loadConfig(path.join(__dirname, 'config.json'));
 // 自绘窗口控制按钮的 IPC（preload 经 contextBridge 暴露给页面，渲染端无 node 权限）
@@ -113,13 +114,7 @@ function injectShellUI() {
     document.getElementById('dsh-shell-css')?.remove();
     const css = document.createElement('style');
     css.id = 'dsh-shell-css';
-    // 会话头 titleCluster 是 flex:1，会把 Session log 顶到最右。用结构选择器压掉
-    // 增长，让 utilities 紧挨「标准模式」；!important 避免被 CSS module 盖掉。
-    css.textContent =
-      'button,input,textarea,select,a,[role="button"],[contenteditable="true"]{-webkit-app-region:no-drag}' +
-      'header>div:first-of-type{justify-content:flex-start !important;}' +
-      'header>div:first-of-type>div:first-of-type{flex:0 1 auto !important;min-width:0 !important;}' +
-      'header>div:first-of-type>div:last-of-type{margin-left:12px !important;margin-right:0 !important;}';
+    css.textContent = ${JSON.stringify(shellLayoutCss(controlWidth))};
     document.head.appendChild(css);
     (${installWindowControls.toString()})(${maximized},${height},${controlWidth});
   })()`).then(() => {
@@ -289,6 +284,7 @@ async function refreshTrayTooltip() {
 }
 
 let updateBusy = false;
+let updateIdleTimer = null;
 let updateState = { status: 'idle', localSha: null, remoteSha: null, step: '', log: '', error: '' };
 
 function pushUpdateState() {
@@ -300,6 +296,26 @@ function setUpdateState(patch) {
   pushUpdateState();
 }
 
+function clearUpdateIdleTimer() {
+  if (updateIdleTimer) { clearTimeout(updateIdleTimer); updateIdleTimer = null; }
+}
+
+/** 短暂状态（已是最新 / 无法连接）几秒后收回芯片，避免一直占着设置旁。 */
+function pulseUpdateState(patch, holdMs = 5000) {
+  clearUpdateIdleTimer();
+  setUpdateState(patch);
+  updateIdleTimer = setTimeout(() => {
+    updateIdleTimer = null;
+    if (updateState.status === patch.status) {
+      setUpdateState({ status: 'idle', step: '', error: '' });
+    }
+  }, holdMs);
+}
+
+function notifyUpdate(title, body) {
+  try { new Notification({ title, body }).show(); } catch { /* 前台窗口时系统通知常被吞，应用内芯片是主反馈 */ }
+}
+
 function appendUpdateLog(line) {
   const prev = updateState.log ? updateState.log.split('\n') : [];
   prev.push(line);
@@ -308,6 +324,7 @@ function appendUpdateLog(line) {
 
 function dismissUpdate() {
   if (updateState.status === 'applying') return;
+  clearUpdateIdleTimer();
   if (updateState.status === 'failed' && updateState.remoteSha) {
     setUpdateState({ status: 'available', step: '', error: '' });
     return;
@@ -328,11 +345,18 @@ async function applyAvailableUpdate() {
     }).catch((e) => ({ ok: false, reason: e.message, at: 'applyUpdate' }));
     if (r.ok) {
       log('update done to ' + r.sha);
-      setUpdateState({ status: 'idle', localSha: r.sha, remoteSha: r.sha, step: '', log: '', error: '' });
-      new Notification({ title: '更新完成', body: '已更新到 ' + short(r.sha) + '，正在重启服务…' }).show();
+      notifyUpdate('更新完成', '已更新到 ' + short(r.sha) + '，正在重启服务…');
       if (server) { try { await server.stop(); } catch { /* ignore */ } }
       await bootServer();
       refreshTrayTooltip();
+      pulseUpdateState({
+        status: 'current',
+        localSha: r.sha,
+        remoteSha: r.sha,
+        step: '已更新到最新',
+        log: '',
+        error: '',
+      }, 6000);
       return { ok: true, sha: r.sha };
     }
     const err = (r.reason || '未知原因') + (r.at ? ' [' + r.at + ']' : '');
@@ -347,32 +371,53 @@ async function applyAvailableUpdate() {
 async function runUpdateCheck(manual = false) {
   // 检查与更新链不可重入：自动定时、启动首查、托盘手动可能重叠，并发跑 git/pnpm 会互相踩。
   if (updateBusy || updateState.status === 'applying') {
-    if (manual) new Notification({ title: '检查更新', body: '已有检查/更新在进行中，请稍候' }).show();
+    if (manual) {
+      showMainWindow();
+      pulseUpdateState({ status: 'busy', error: '已有检查/更新在进行中' }, 3000);
+    }
     return;
   }
   updateBusy = true;
+  clearUpdateIdleTimer();
+  if (manual) {
+    showMainWindow();
+    setUpdateState({ status: 'checking', step: '正在检查更新…', error: '' });
+  }
   try {
     if (!updater) updater = makeUpdater(cfg);
     let info;
-    try { info = await updater.checkForUpdate(); } catch (e) { log('update check error: ' + e.message); return; }
+    try { info = await updater.checkForUpdate(); } catch (e) {
+      log('update check error: ' + e.message);
+      if (manual) pulseUpdateState({ status: 'unreachable', error: e.message.slice(0, 200) });
+      return;
+    }
     if (!info.reachable) {
-      if (manual) new Notification({ title: '检查更新', body: '无法连接 github.com，稍后再试' }).show();
+      if (manual) pulseUpdateState({ status: 'unreachable', error: '无法连接 github.com' });
       return;
     }
     if (info.diverged) {
       log('local history diverged from upstream, skipping');
-      if (manual) new Notification({ title: '检查更新', body: '本地与上游无法快进，需在仓库手动处理' }).show();
+      if (manual) pulseUpdateState({ status: 'diverged', localSha: info.localSha, remoteSha: info.remoteSha, error: '本地与上游无法快进' });
       return;
     }
     if (!info.ahead) {
       setUpdateState({ status: 'idle', localSha: info.localSha, remoteSha: info.remoteSha, step: '', log: '', error: '' });
-      if (manual) new Notification({ title: '检查更新', body: '已是最新版本 ' + short(info.localSha) }).show();
+      if (manual) {
+        pulseUpdateState({
+          status: 'current',
+          localSha: info.localSha,
+          remoteSha: info.remoteSha,
+          step: '已是最新',
+          error: '',
+        }, 6000);
+        notifyUpdate('检查更新', '已是最新版本 ' + short(info.localSha));
+      }
       return;
     }
     const already = updateState.status === 'available' && updateState.remoteSha === info.remoteSha;
     setUpdateState({ status: 'available', localSha: info.localSha, remoteSha: info.remoteSha, step: '', log: '', error: '' });
     if (!already) {
-      new Notification({ title: '发现新版本', body: `${short(info.localSha)} → ${short(info.remoteSha)}，点击设置旁的「更新」` }).show();
+      notifyUpdate('发现新版本', `${short(info.localSha)} → ${short(info.remoteSha)}，点击设置旁的「更新」`);
     }
   } finally {
     updateBusy = false;
@@ -392,6 +437,9 @@ function registerHotkey() {
   const ok = globalShortcut.register(cfg.hotkey, toggleMainWindow);
   if (!ok) log(`全局快捷键 ${cfg.hotkey} 注册失败（可能被其他程序占用），已跳过`);
 }
+
+// Windows 通知按 AUMID 分组；只在进程里设置，不盖章进 exe（避免任务栏图标错绑）。
+app.setAppUserModelId('Fahaxik1oxxx.DeepSeekHarness');
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
