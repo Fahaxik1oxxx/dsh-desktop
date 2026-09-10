@@ -7,6 +7,7 @@ const { makeUpdater, headSha } = require('./updater.js');
 const { loadConfig } = require('./config-lib.js');
 const { parseDshWebUrl } = require('./web-url.js');
 const { shellLayoutCss } = require('./shell-layout.js');
+const { tailText } = require('./log-view.js');
 
 const cfg = loadConfig(path.join(__dirname, 'config.json'));
 // 自绘窗口控制按钮的 IPC（preload 经 contextBridge 暴露给页面，渲染端无 node 权限）
@@ -19,9 +20,13 @@ ipcMain.handle('dsh-window:close', () => { if (win && !win.isDestroyed()) win.cl
 ipcMain.handle('dsh-update:state', () => updateState);
 ipcMain.handle('dsh-update:apply', () => applyAvailableUpdate());
 ipcMain.handle('dsh-update:dismiss', () => { dismissUpdate(); return updateState; });
+ipcMain.handle('dsh-log:read', () => readLogTail());
+ipcMain.handle('dsh-log:reveal', () => shell.showItemInFolder(LOG));
+ipcMain.handle('dsh-log:open-external', () => shell.openPath(LOG));
 
 const LOG = path.join(__dirname, 'app.log');
 const SHELL_UPDATE_JS = fs.readFileSync(path.join(__dirname, 'shell-update.js'), 'utf8');
+const SHELL_LOG_JS = fs.readFileSync(path.join(__dirname, 'shell-log.js'), 'utf8');
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -33,6 +38,25 @@ function log(msg) {
   console.log(line);
 }
 function short(s) { return (s || '').slice(0, 8); }
+
+function readLogTail() {
+  try {
+    const stat = fs.statSync(LOG);
+    const raw = fs.readFileSync(LOG, 'utf8');
+    const tail = tailText(raw);
+    return { ...tail, size: stat.size, path: LOG };
+  } catch {
+    return { text: '', truncated: false, size: 0, path: LOG };
+  }
+}
+
+let pendingLogOpen = false;
+
+function openLogViewer() {
+  showMainWindow();
+  if (win && !win.isDestroyed()) win.webContents.send('dsh-log:open');
+  else pendingLogOpen = true;
+}
 
 let win = null;
 let tray = null;
@@ -119,7 +143,14 @@ function injectShellUI() {
     (${installWindowControls.toString()})(${maximized},${height},${controlWidth});
   })()`).then(() => {
     if (!win || win.isDestroyed()) return;
-    return win.webContents.executeJavaScript(SHELL_UPDATE_JS);
+    return win.webContents.executeJavaScript(SHELL_UPDATE_JS)
+      .then(() => { if (win && !win.isDestroyed()) return win.webContents.executeJavaScript(SHELL_LOG_JS); })
+      .then(() => {
+        if (pendingLogOpen && win && !win.isDestroyed()) {
+          pendingLogOpen = false;
+          win.webContents.send('dsh-log:open');
+        }
+      });
   }).catch(() => { /* 页面已卸载或尚未就绪 */ });
 }
 
@@ -266,7 +297,7 @@ function buildTray() {
     { label: '显示 / 隐藏', click: () => { if (win && win.isVisible()) win.hide(); else showMainWindow(); } },
     { label: '重启服务器', click: () => { restartServer(); } },
     { label: '在浏览器打开', click: () => { if (/^https?:/i.test(sessionUrl)) shell.openExternal(sessionUrl); } },
-    { label: '打开日志', click: () => { shell.openPath(LOG); } },
+    { label: '打开日志', click: () => openLogViewer() },
     { label: '检查更新', click: () => runUpdateCheck(true) },
     { type: 'separator' },
     { label: '退出', click: () => { quitting = true; app.quit(); } },

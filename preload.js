@@ -22,3 +22,10 @@ contextBridge.exposeInMainWorld('dshUpdate', {
   dismiss: () => ipcRenderer.invoke('dsh-update:dismiss'),
   onState: (cb) => subscribe('dsh-update:state', cb),
 });
+
+contextBridge.exposeInMainWorld('dshLog', {
+  read: () => ipcRenderer.invoke('dsh-log:read'),
+  reveal: () => ipcRenderer.invoke('dsh-log:reveal'),
+  openExternal: () => ipcRenderer.invoke('dsh-log:open-external'),
+  onOpen: (cb) => subscribe('dsh-log:open', cb),
+});
