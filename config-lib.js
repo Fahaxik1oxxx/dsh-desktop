@@ -32,7 +32,9 @@ function loadConfig(file) {
   }
   const configDir = path.dirname(path.resolve(file));
   if (cfg.icon === undefined || cfg.icon === '') {
-    cfg.icon = path.join(configDir, 'assets', 'deepseek.ico');
+    const winIco = path.join(configDir, 'assets', 'deepseek-win.ico');
+    const ico = path.join(configDir, 'assets', 'deepseek.ico');
+    cfg.icon = (process.platform === 'win32' && fs.existsSync(winIco)) ? winIco : ico;
   } else if (typeof cfg.icon !== 'string') {
     throw new Error('config: icon 必须是字符串类型');
   } else if (!path.isAbsolute(cfg.icon)) {

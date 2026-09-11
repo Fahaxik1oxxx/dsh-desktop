@@ -7,6 +7,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "start:app": "cmd /c start-desktop.cmd",
     "test": "node --test",
     "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set-shortcut.ps1",
     "postinstall": "node -e \"if(process.platform!=='win32')process.exit(0);require('node:child_process').spawnSync('cmd.exe',['/c',require('node:path').join('scripts','stamp-desktop-exe.cmd')],{stdio:'inherit',windowsHide:true})\""

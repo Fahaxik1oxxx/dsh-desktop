@@ -6,7 +6,7 @@
   "serverArgs": ["apps/cli/lib/bin.js", "web", "--no-open"],
   "port": 3080,
   "url": "http://127.0.0.1:3080",
-  "icon": "assets/deepseek.ico",
+  "icon": "assets/deepseek-win.ico",
   "checkIntervalMs": 1800000,
   "autoStart": false,
   "hotkey": "Alt+Shift+D"

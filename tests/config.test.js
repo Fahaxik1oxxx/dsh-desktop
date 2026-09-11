@@ -37,10 +37,20 @@ test('loadConfig: 必填字段缺失或非字符串抛错', () => {
   }
 });
 
-test('loadConfig: 省略 icon 时解析为 config 旁的 assets/deepseek.ico', () => {
+test('loadConfig: 省略 icon 时解析为 config 旁的默认图标', () => {
   const file = writeConfig();
   const cfg = loadConfig(file);
   assert.equal(cfg.icon, path.join(path.dirname(file), 'assets', 'deepseek.ico'));
+});
+
+test('loadConfig: Windows 上省略 icon 且存在 deepseek-win.ico 时优先用它', () => {
+  if (process.platform !== 'win32') return;
+  const file = writeConfig();
+  const assets = path.join(path.dirname(file), 'assets');
+  fs.mkdirSync(assets);
+  fs.writeFileSync(path.join(assets, 'deepseek-win.ico'), '');
+  const cfg = loadConfig(file);
+  assert.equal(cfg.icon, path.join(assets, 'deepseek-win.ico'));
 });
 
 test('loadConfig: 相对 icon 相对 config 文件解析', () => {

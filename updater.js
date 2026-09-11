@@ -1,4 +1,4 @@
-// updater.js — 检测 upstream 新版本并在用户确认后执行 git 拉取+重建。
+// updater.js — 检测 upstream 新版本并在用户确认后快进合并 + 按变更增量重建。
 // 依赖注入：makeUpdater(cfg, deps)。deps 可覆盖 runGit/runBash，便于单测。
 const fs = require('node:fs');
 const path = require('node:path');
