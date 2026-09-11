@@ -73,13 +73,13 @@ npm start
 
 Electron 下载慢可设镜像：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
-Windows 任务栏按可执行文件名分组：直接跑 `electron.exe` 永远是 Electron 默认图标。`npm install` 会复制并盖章 `DeepSeekHarness.exe`；请用桌面快捷方式或 `start-desktop.cmd` 启动。创建/刷新快捷方式：
+Windows 任务栏按可执行文件名分组：直接跑 `electron.exe` 永远是 Electron 默认图标。`npm install` 会复制并盖章 `DeepSeekHarness.exe`；请用桌面快捷方式或 `start-desktop.cmd` 启动。创建/刷新快捷方式（图标取自盖章后的 exe，不依赖会搬家的 `.ico` 路径）：
 
 ```sh
 npm run shortcut
 ```
 
-若任务栏仍钉着旧的 Electron 图标，先取消固定，再从新快捷方式打开并重新固定。
+若桌面图标空白或任务栏仍钉着旧的 Electron 图标，先跑上面的命令，再取消固定、从新快捷方式打开并重新固定。
 
 ## 开发与测试
 

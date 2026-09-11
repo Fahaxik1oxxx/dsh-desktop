@@ -1,5 +1,7 @@
 # Create or refresh the desktop and Start Menu shortcuts.
-# Defaults point at DeepSeekHarness.exe (stamped on npm install) and assets/deepseek.ico.
+# Defaults point at DeepSeekHarness.exe (stamped on npm install). Explorer
+# reads the BMP ICO already in that PE, so the shortcut does not depend on
+# a sidecar .ico path that can move.
 param(
     [string]$Target,
     [string]$WorkDir,
@@ -12,16 +14,12 @@ $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 
 if (-not $WorkDir) { $WorkDir = $Root }
-if (-not $Icon) {
-    $winIco = Join-Path $Root 'assets\deepseek-win.ico'
-    $Ico = Join-Path $Root 'assets\deepseek.ico'
-    $Icon = if (Test-Path $winIco) { $winIco } else { $Ico }
-}
 if (-not $Target) {
     $app = Join-Path $Root 'node_modules\electron\dist\DeepSeekHarness.exe'
     $elec = Join-Path $Root 'node_modules\electron\dist\electron.exe'
     $Target = if (Test-Path $app) { $app } else { $elec }
 }
+if (-not $Icon) { $Icon = $Target }
 
 if (-not (Test-Path $Target)) {
     Write-Error "Target not found: $Target (run npm install first)"
@@ -44,3 +42,10 @@ function Write-AppShortcut([string]$Directory) {
 
 Write-AppShortcut ([Environment]::GetFolderPath('Desktop'))
 Write-AppShortcut (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs')
+
+# Ask Explorer to drop a stale icon cache for these .lnk files.
+Add-Type -Namespace DshDesktop -Name ShellNotify -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("shell32.dll")]
+public static extern void SHChangeNotify(int wEventId, uint uFlags, System.IntPtr dwItem1, System.IntPtr dwItem2);
+'@
+[DshDesktop.ShellNotify]::SHChangeNotify(0x8000000, 0x1000, [IntPtr]::Zero, [IntPtr]::Zero)

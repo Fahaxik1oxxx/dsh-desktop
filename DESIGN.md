@@ -39,7 +39,7 @@ desktop/                       ← 本仓库
 - 托盘：显示/隐藏、重启服务器、在浏览器打开、打开日志、检查更新。打开日志在窗口内显示实时尾巴，可复制、打开文件夹或用记事本。手动检查更新会显示应用内状态（检查中 / 已是最新 / 无法检查），不依赖系统通知是否弹出。
 - 有可用更新时，侧栏「设置」按钮旁出现「更新」；进度在主窗口内，不再另开窗口。
 - 更新检测失败静默；本地已分叉或有 tracked 改动则中止，不覆盖工作区。构建按 `git diff` 选 `build:web` / `build:lib+web` / 完整 `build`。
-- Windows 任务栏按可执行文件名分组：`npm install` 把 `electron.exe` 复制为 `DeepSeekHarness.exe` 并盖章 `assets/deepseek-win.ico`。
+- Windows 任务栏按可执行文件名分组：`npm install` 把 `electron.exe` 复制为 `DeepSeekHarness.exe` 并盖章 `assets/deepseek-win.ico`。桌面/开始菜单快捷方式的图标指向该 exe，不引用会搬家的 sidecar `.ico`。
 
 ## 测试
 
