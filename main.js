@@ -246,7 +246,10 @@ async function bootServer(attempt = 1) {
   } catch (e) {
     log('server failed: ' + e.message);
     if (quitting) return;
-    if (attempt < BOOT_RETRIES) {
+    // 服务器进程自己退出（组合失败/构建残缺）是确定性故障，重试不会好转，
+    // 立即报错；只有就绪超时这类瞬态问题才值得重试。
+    const crashed = /exited early/.test(e.message);
+    if (!crashed && attempt < BOOT_RETRIES) {
       log(`retrying boot (${attempt + 1}/${BOOT_RETRIES}) in ${BOOT_RETRY_DELAY_MS / 1000}s`);
       setTimeout(() => { if (!quitting) bootServer(attempt + 1); }, BOOT_RETRY_DELAY_MS);
     } else {

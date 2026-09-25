@@ -121,7 +121,14 @@ function makeUpdater(cfg, deps = {}) {
           const cmd = selectBuildCommand(files);
           if (!cmd) { onProgress('无需重建前端/库，跳过构建'); return { ok: true }; }
           onProgress('运行 ' + cmd + ' …');
-          const b = await runBash('cd "' + winToPosix(repo) + '" && ' + cmd + ' 2>&1', { onOut });
+          let b = await runBash('cd "' + winToPosix(repo) + '" && ' + cmd + ' 2>&1', { onOut });
+          if (b.code !== 0) {
+            // 跨大版本快进后 tsc 增量状态（tsbuildinfo）可能指向已删除的导出，
+            // rolldown 报 Missing export。清产物全量重建一次，大多可自愈。
+            onProgress('构建失败，清理产物后全量重建 …');
+            await runBash('cd "' + winToPosix(repo) + '" && corepack pnpm run clean 2>&1', { onOut });
+            b = await runBash('cd "' + winToPosix(repo) + '" && npm run build 2>&1', { onOut });
+          }
           const tail = (b.stdout || b.stderr || '').trim().split('\n').slice(-3).join('\n');
           return b.code === 0 ? { ok: true } : { ok: false, reason: '构建失败：\n' + tail.slice(0, 600) };
       } },
