@@ -1,5 +1,5 @@
 // main.js — Electron 主进程：拉起 dsh 服务器、加载其 web UI、托盘常驻、检测并执行更新。
-const { app, BrowserWindow, Tray, Menu, dialog, Notification, nativeImage, shell, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, dialog, Notification, nativeImage, shell, globalShortcut, ipcMain, screen: electronScreen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { execFile } = require('node:child_process');
@@ -9,6 +9,7 @@ const { loadConfig } = require('./config-lib.js');
 const { parseDshWebUrl } = require('./web-url.js');
 const { shellLayoutCss } = require('./shell-layout.js');
 const { tailText } = require('./log-view.js');
+const { loadWindowState, saveWindowState, restoreWindowState } = require('./window-state.js');
 
 const cfg = loadConfig(path.join(__dirname, 'config.json'));
 // 自绘窗口控制按钮的 IPC（preload 经 contextBridge 暴露给页面，渲染端无 node 权限）
@@ -159,10 +160,16 @@ const LOADING_HTML = '<html><head><meta charset="utf-8"></head><body style="font
   '<div style="font-size:20px;font-weight:600">DeepSeek Harness</div>' +
   '<div style="margin-top:12px;font-size:13px;opacity:.75">正在启动服务…</div></body></html>';
 
+const WINDOW_STATE_FILE = path.join(__dirname, 'window-state.json');
+
 function createWindow() {
+  // 恢复上次的窗口位置/大小/最大化；越界（拔显示器等）自动回落到可见区域
+  const screen = electronScreen;
+  const geom = restoreWindowState(loadWindowState(WINDOW_STATE_FILE), screen.getAllDisplays(), { width: 1280, height: 800 });
   win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    ...(geom.x !== undefined ? { x: geom.x, y: geom.y } : {}),
+    width: geom.width,
+    height: geom.height,
     icon: cfg.icon,
     title: 'DeepSeek Harness',
     show: false, // 等首帧渲染完成再显示，避免白屏一闪
@@ -175,6 +182,14 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  if (geom.maximized) win.maximize();
+  const persistWindowState = () => {
+    if (!win || win.isDestroyed() || win.isMinimized()) return;
+    saveWindowState(WINDOW_STATE_FILE, { ...win.getBounds(), maximized: win.isMaximized() });
+  };
+  win.on('close', persistWindowState);
+  win.on('maximize', persistWindowState);
+  win.on('unmaximize', persistWindowState);
   if (cfg.icon) win.setIcon(cfg.icon);
   win.once('ready-to-show', () => { if (win && !win.isDestroyed()) win.show(); });
   // 点 X 不销毁窗口，改为隐藏到托盘/任务栏；内容保留，恢复即秒显、不再白屏重载。

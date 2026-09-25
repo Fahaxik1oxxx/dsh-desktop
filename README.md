@@ -14,6 +14,7 @@ deepseek-harness/            ← 上游克隆（保持可 fast-forward）
 
 - 主进程 `spawn` `node apps/cli/lib/bin.js web --no-open`（默认 127.0.0.1:3080）。从启动输出解析带 token 的环回 URL 后只在 Electron 窗口加载；`--no-open` 禁止上游打开系统浏览器。启动前预检端口占用。
 - 关窗隐藏到托盘，不销毁窗口。无系统标题栏：自绘最小化/最大化/关闭叠在右上角。会话头「打开侧边栏」和右栏折叠按钮会左移，避免叠在关闭键上。
+- 窗口位置/大小/最大化跨启动记忆（`window-state.json`，机器本地文件）；显示器拔掉或分辨率变化时自动回落到可见区域。
 - 服务意外退出自动重启（最多 5 次）；主动停止/退出应用不会误触发。
 - 更新器每 `checkIntervalMs`（默认 30 分钟）`git fetch --prune --no-tags origin master`。发现新版本时，侧栏「设置」旁出现「更新」。托盘「检查更新」把窗口提到前台，应用内显示检查中 / 已是最新 / 无法检查 / 无法快进，不依赖系统通知。
 - 点「更新」后：本地 `git merge --ff-only FETCH_HEAD`（不再二次 fetch）→ lockfile 变化时 `corepack pnpm install` → 按 diff 选最短构建 → 重启服务器。进度在主窗口右下角。
