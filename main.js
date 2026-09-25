@@ -2,6 +2,7 @@
 const { app, BrowserWindow, Tray, Menu, dialog, Notification, nativeImage, shell, globalShortcut, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { execFile } = require('node:child_process');
 const { startServer, waitForPort } = require('./server.js');
 const { makeUpdater, headSha, repairBuild } = require('./updater.js');
 const { loadConfig } = require('./config-lib.js');
@@ -205,11 +206,58 @@ const MAX_CRASH_RESTARTS = 5;
 const CRASH_RESTART_DELAY_MS = 3000;
 let crashRestarts = 0;
 let bootRepairTried = false; // 启动自修复每会话只试一次，防循环
+let bootRepairBusy = false; // 自修复运行中：更新检查/应用一律让路
 
-/** spawn 前预检：端口被别的程序占用时立刻报真实原因，而不是误判成就绪或白等 90s。 */
+/** execFile 的 Promise 化：不抛异常，返回 {err, stdout, stderr}。 */
+function execFileP(file, args) {
+  return new Promise((resolve) => {
+    execFile(file, args, { windowsHide: true }, (err, stdout, stderr) => resolve({ err, stdout, stderr }));
+  });
+}
+
+/**
+ * 端口被占时，若监听者是上次崩溃遗留的我方服务器（node 跑本仓库的 bin.js），
+ * 杀掉整棵进程树并返回 true；其他程序一律不动，返回 false 交给调用方报错。
+ */
+async function killStaleServer(port) {
+  const ns = await execFileP('netstat.exe', ['-ano']);
+  if (ns.err) return false;
+  const pids = new Set();
+  for (const line of ns.stdout.split(/\r?\n/)) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length >= 5 && cols[3] === 'LISTENING' && cols[1].endsWith(':' + String(port))) {
+      if (/^\d+$/.test(cols[4])) pids.add(cols[4]);
+    }
+  }
+  for (const pid of pids) {
+    const ps = await execFileP('powershell.exe', ['-NoProfile', '-Command',
+      `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`]);
+    const cmdline = ps.stdout || '';
+    const ours = /apps[\\/]cli[\\/]lib[\\/]bin\.js/.test(cmdline)
+      && (cmdline.includes(cfg.nodeExe) || /node(\.exe)?["']?\s/i.test(cmdline));
+    if (!ours) {
+      log(`port ${port} held by pid ${pid}, not our server; leaving it alone`);
+      return false;
+    }
+    log(`killing stale server pid ${pid} left by a previous crash`);
+    await execFileP('taskkill.exe', ['/pid', pid, '/T', '/F']);
+  }
+  return pids.size > 0;
+}
+
+/** spawn 前预检：清掉上次崩溃可能遗留的我方服务器；别的程序占端口则报明确原因。 */
 async function assertPortFree(port) {
   const busy = await waitForPort(port, { timeoutMs: 1000 }).then(() => true, () => false);
-  if (busy) throw new Error(`端口 ${port} 已被其他程序占用，请关闭占用进程，或在 config.json 中更换 port`);
+  if (!busy) return;
+  if (await killStaleServer(port)) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const still = await waitForPort(port, { timeoutMs: 1000 }).then(() => true, () => false);
+    if (!still) {
+      new Notification({ title: 'DeepSeek Harness', body: '检测到上次残留的服务进程，已自动清理' }).show();
+      return;
+    }
+  }
+  throw new Error(`端口 ${port} 已被其他程序占用，请关闭占用进程，或在 config.json 中更换 port`);
 }
 
 /** 给 server 打主动停止标记：watchServer 凭它区分「主动 stop」与「意外退出」。 */
@@ -252,6 +300,7 @@ async function bootServer(attempt = 1) {
     const crashed = /exited early/.test(e.message);
     if (crashed && !bootRepairTried) {
       bootRepairTried = true;
+      bootRepairBusy = true;
       log('attempting one-time boot repair (install + build)');
       ensureProgressWindow();
       progressLine('启动自修复：安装依赖并重建，请稍候（可能需要几分钟）…');
@@ -259,12 +308,15 @@ async function bootServer(attempt = 1) {
         await repairBuild(cfg, progressLine);
         if (progressWin && !progressWin.isDestroyed()) progressWin.close();
         log('boot repair done, retrying boot');
+        if (quitting) return;
         new Notification({ title: 'DeepSeek Harness', body: '修复完成，正在重新启动服务…' }).show();
         bootServer(1);
       } catch (re) {
         log('boot repair failed: ' + re.message);
         if (progressWin && !progressWin.isDestroyed()) progressWin.close();
         dialog.showErrorBox('DeepSeek Harness 启动失败', e.message + '\n\n自动修复也失败了：\n' + re.message);
+      } finally {
+        bootRepairBusy = false;
       }
       return;
     }
@@ -277,10 +329,15 @@ async function bootServer(attempt = 1) {
   }
 }
 
-/** 服务就绪后看护：意外退出（排除主动 stop/退出中）→ 自动重启，次数超限则停手报错。 */
+/** 服务就绪后看护：意外退出（排除主动 stop/退出中/更新进行中）→ 自动重启，超限停手。 */
 function watchServer(s) {
   s.child.once('exit', (code, sig) => {
     if (quitting || s.stoppedByUser) return;
+    // 更新链进行中不抢跑：更新成功后的统一重启会用新产物拉起，这里重启只会混跑旧产物
+    if (updateBusy || bootRepairBusy) {
+      log(`server exited (code=${code}, sig=${sig}) while update/repair is running; deferring restart`);
+      return;
+    }
     crashRestarts += 1;
     log(`server exited unexpectedly (code=${code}, sig=${sig})`);
     if (crashRestarts > MAX_CRASH_RESTARTS) {
@@ -386,7 +443,7 @@ function dismissUpdate() {
 }
 
 async function applyAvailableUpdate() {
-  if (updateBusy) return { ok: false, reason: 'busy' };
+  if (updateBusy || bootRepairBusy) return { ok: false, reason: 'busy' };
   if (!updater) updater = makeUpdater(cfg);
   updateBusy = true;
   setUpdateState({ status: 'applying', step: '开始更新…', log: '', error: '' });
@@ -418,6 +475,12 @@ async function applyAvailableUpdate() {
     setUpdateState({ status: 'failed', error: err });
     if (r.rolledBack) notifyUpdate('更新失败', '已回滚到更新前版本，应用不受影响');
     refreshTrayTooltip();
+    // 更新期间服务器若已退出（崩溃重启被延后），回滚完成后把它拉起来
+    const dead = !server || (server.child.exitCode !== null || server.child.signalCode !== null);
+    if (dead && !quitting) {
+      log('server is down after failed update; rebooting it');
+      bootServer();
+    }
     return { ok: false, reason: err };
   } finally {
     updateBusy = false;
@@ -426,7 +489,7 @@ async function applyAvailableUpdate() {
 
 async function runUpdateCheck(manual = false) {
   // 检查与更新链不可重入：自动定时、启动首查、托盘手动可能重叠，并发跑 git/pnpm 会互相踩。
-  if (updateBusy || updateState.status === 'applying') {
+  if (updateBusy || bootRepairBusy || updateState.status === 'applying') {
     if (manual) {
       showMainWindow();
       pulseUpdateState({ status: 'busy', error: '已有检查/更新在进行中' }, 3000);
