@@ -52,6 +52,26 @@ function linePump(onProgress) {
   };
 }
 
+/**
+ * 跑一条构建命令；失败则清产物后全量重建一次。跨大版本快进后 tsc 增量状态
+ * （tsbuildinfo）可能指向已删除的导出，rolldown 报 Missing export，clean 可自愈。
+ */
+async function selfHealBuild(runBash, repo, cmd, onOut, onProgress) {
+  const at = (script) => `cd "${winToPosix(repo)}" && ${script} 2>&1`;
+  let b = await runBash(at(cmd), { onOut });
+  if (b.code !== 0) {
+    onProgress('构建失败，清理产物后全量重建 …');
+    await runBash(at('corepack pnpm run clean'), { onOut });
+    b = await runBash(at('npm run build'), { onOut });
+  }
+  return b;
+}
+
+function buildFailReason(b) {
+  const tail = (b.stdout || b.stderr || '').trim().split('\n').slice(-3).join('\n');
+  return '构建失败：\n' + tail.slice(0, 600);
+}
+
 function makeUpdater(cfg, deps = {}) {
   const repo = cfg.repo;
   // 惰性解析：注入 deps.runGit 的单测不触发文件探测，配置问题在首次真实调用时暴露
@@ -111,6 +131,7 @@ function makeUpdater(cfg, deps = {}) {
       { name: 'install-if-needed', fn: async () => {
           const changed = await lockfileChanged(repo, (args) => runGit(stripGit(args)), state.preSha, 'HEAD');
           if (!changed) { onProgress('依赖未变化，跳过 pnpm install'); return { ok: true }; }
+          state.installed = true; // 回滚凭据：只要动过 node_modules，回滚时就要恢复旧依赖
           onProgress('依赖变化，运行 pnpm install …');
           const i = await runBash('cd "' + winToPosix(repo) + '" && corepack pnpm install --config.confirmModulesPurge=false 2>&1', { onOut });
           return i.code === 0 ? { ok: true } : { ok: false, reason: 'pnpm install 失败：' + (i.stderr || i.stdout).slice(0, 500) };
@@ -121,20 +142,42 @@ function makeUpdater(cfg, deps = {}) {
           const cmd = selectBuildCommand(files);
           if (!cmd) { onProgress('无需重建前端/库，跳过构建'); return { ok: true }; }
           onProgress('运行 ' + cmd + ' …');
-          let b = await runBash('cd "' + winToPosix(repo) + '" && ' + cmd + ' 2>&1', { onOut });
-          if (b.code !== 0) {
-            // 跨大版本快进后 tsc 增量状态（tsbuildinfo）可能指向已删除的导出，
-            // rolldown 报 Missing export。清产物全量重建一次，大多可自愈。
-            onProgress('构建失败，清理产物后全量重建 …');
-            await runBash('cd "' + winToPosix(repo) + '" && corepack pnpm run clean 2>&1', { onOut });
-            b = await runBash('cd "' + winToPosix(repo) + '" && npm run build 2>&1', { onOut });
-          }
-          const tail = (b.stdout || b.stderr || '').trim().split('\n').slice(-3).join('\n');
-          return b.code === 0 ? { ok: true } : { ok: false, reason: '构建失败：\n' + tail.slice(0, 600) };
+          const b = await selfHealBuild(runBash, repo, cmd, onOut, onProgress);
+          return b.code === 0 ? { ok: true } : { ok: false, reason: buildFailReason(b) };
       } },
     ];
     const res = await runUpdateChain(steps);
-    if (!res.ok) return { ok: false, reason: res.reason, at: res.at };
+    if (!res.ok) {
+      // 保护机制：合并之后任何一步失败，都把仓库滚回更新前的 commit 并恢复到
+      // 可运行的旧版本，绝不把应用留在打不开的状态。合并前失败无需回滚。
+      const postMerge = res.at === 'install-if-needed' || res.at === 'build';
+      if (postMerge) {
+        onProgress('更新失败，回滚到更新前版本 …');
+        const r = await runGit(['reset', '--hard', state.preSha], { onOut });
+        if (r.code !== 0) {
+          return { ok: false, reason: res.reason + '；且回滚失败：' + (r.stderr || r.stdout).slice(0, 200), at: res.at, rolledBack: false };
+        }
+        try {
+          if (state.installed) {
+            onProgress('恢复更新前依赖 …');
+            const i = await runBash('cd "' + winToPosix(repo) + '" && corepack pnpm install --config.confirmModulesPurge=false 2>&1', { onOut });
+            if (i.code !== 0) throw new Error('pnpm install 失败：' + (i.stderr || i.stdout).slice(0, 300));
+          }
+          // 只有构建阶段失败才需要重建旧版本（产物被新构建部分覆盖）；
+          // install 失败时产物仍是旧版本的好状态，恢复依赖即可。
+          if (res.at === 'build') {
+            onProgress('重建更新前版本 …');
+            const b = await selfHealBuild(runBash, repo, 'npm run build', onOut, onProgress);
+            if (b.code !== 0) throw new Error(buildFailReason(b));
+          }
+          onProgress('已回滚到更新前版本 ' + state.preSha.slice(0, 8));
+          return { ok: false, reason: res.reason, at: res.at, rolledBack: true };
+        } catch (e) {
+          return { ok: false, reason: res.reason + '；回滚后恢复旧版本失败：' + e.message, at: res.at, rolledBack: false };
+        }
+      }
+      return { ok: false, reason: res.reason, at: res.at, rolledBack: false };
+    }
     const newSha = await gitOut(['rev-parse', 'HEAD']);
     return { ok: true, sha: newSha };
   }
@@ -148,4 +191,20 @@ async function headSha(cfg) {
   return r.code === 0 ? r.stdout.trim() : '';
 }
 
-module.exports = { makeUpdater, headSha, defaultGitExe, bashCommand };
+/**
+ * 启动自修复：服务器因产物残缺/依赖损坏无法组合时，装依赖 + 全量重建一次。
+ * 与更新无关的独立恢复路径；成功后调用方重新拉起服务器即可。
+ */
+async function repairBuild(cfg, onProgress = () => {}) {
+  const repo = cfg.repo;
+  const onOut = linePump(onProgress);
+  const runBash = (script) => run(cfg.bashExe, bashCommand(cfg, script), { cwd: repo, timeoutMs: 1800000, onOut });
+  onProgress('自修复：安装依赖 …');
+  const i = await runBash(`cd "${winToPosix(repo)}" && corepack pnpm install --config.confirmModulesPurge=false 2>&1`);
+  if (i.code !== 0) throw new Error('pnpm install 失败：' + (i.stderr || i.stdout).slice(0, 500));
+  const b = await selfHealBuild(runBash, repo, 'npm run build', onOut, onProgress);
+  if (b.code !== 0) throw new Error(buildFailReason(b));
+  return true;
+}
+
+module.exports = { makeUpdater, headSha, defaultGitExe, bashCommand, repairBuild };

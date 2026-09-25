@@ -3,7 +3,7 @@ const { app, BrowserWindow, Tray, Menu, dialog, Notification, nativeImage, shell
 const path = require('node:path');
 const fs = require('node:fs');
 const { startServer, waitForPort } = require('./server.js');
-const { makeUpdater, headSha } = require('./updater.js');
+const { makeUpdater, headSha, repairBuild } = require('./updater.js');
 const { loadConfig } = require('./config-lib.js');
 const { parseDshWebUrl } = require('./web-url.js');
 const { shellLayoutCss } = require('./shell-layout.js');
@@ -204,6 +204,7 @@ const BOOT_RETRY_DELAY_MS = 10000;
 const MAX_CRASH_RESTARTS = 5;
 const CRASH_RESTART_DELAY_MS = 3000;
 let crashRestarts = 0;
+let bootRepairTried = false; // 启动自修复每会话只试一次，防循环
 
 /** spawn 前预检：端口被别的程序占用时立刻报真实原因，而不是误判成就绪或白等 90s。 */
 async function assertPortFree(port) {
@@ -246,9 +247,27 @@ async function bootServer(attempt = 1) {
   } catch (e) {
     log('server failed: ' + e.message);
     if (quitting) return;
-    // 服务器进程自己退出（组合失败/构建残缺）是确定性故障，重试不会好转，
-    // 立即报错；只有就绪超时这类瞬态问题才值得重试。
+    // 服务器进程自己退出（组合失败/构建残缺）是确定性故障，重试不会好转。
+    // 先尝试一次性自修复（装依赖+重建），成功后重新拉起；仍失败才报错。
     const crashed = /exited early/.test(e.message);
+    if (crashed && !bootRepairTried) {
+      bootRepairTried = true;
+      log('attempting one-time boot repair (install + build)');
+      ensureProgressWindow();
+      progressLine('启动自修复：安装依赖并重建，请稍候（可能需要几分钟）…');
+      try {
+        await repairBuild(cfg, progressLine);
+        if (progressWin && !progressWin.isDestroyed()) progressWin.close();
+        log('boot repair done, retrying boot');
+        new Notification({ title: 'DeepSeek Harness', body: '修复完成，正在重新启动服务…' }).show();
+        bootServer(1);
+      } catch (re) {
+        log('boot repair failed: ' + re.message);
+        if (progressWin && !progressWin.isDestroyed()) progressWin.close();
+        dialog.showErrorBox('DeepSeek Harness 启动失败', e.message + '\n\n自动修复也失败了：\n' + re.message);
+      }
+      return;
+    }
     if (!crashed && attempt < BOOT_RETRIES) {
       log(`retrying boot (${attempt + 1}/${BOOT_RETRIES}) in ${BOOT_RETRY_DELAY_MS / 1000}s`);
       setTimeout(() => { if (!quitting) bootServer(attempt + 1); }, BOOT_RETRY_DELAY_MS);
@@ -393,9 +412,12 @@ async function applyAvailableUpdate() {
       }, 6000);
       return { ok: true, sha: r.sha };
     }
-    const err = (r.reason || '未知原因') + (r.at ? ' [' + r.at + ']' : '');
-    log('update failed: ' + err);
+    const err = (r.reason || '未知原因') + (r.at ? ' [' + r.at + ']' : '')
+      + (r.rolledBack ? '（已自动回滚到更新前的可用版本，应用不受影响；稍后可再试更新）' : '');
+    log('update failed: ' + err + (r.rolledBack ? ' [rolled back]' : ''));
     setUpdateState({ status: 'failed', error: err });
+    if (r.rolledBack) notifyUpdate('更新失败', '已回滚到更新前版本，应用不受影响');
+    refreshTrayTooltip();
     return { ok: false, reason: err };
   } finally {
     updateBusy = false;
