@@ -7,11 +7,11 @@
 // 上游仓库保持干净（不修改任何上游文件），所以 git pull 永远是快进。
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
 const { run } = require('./proc.js');
 const { hasTrackedChanges, isBehind } = require('./gitup.js');
 const { selectDesktopBuildPlan } = require('./build-plan.js');
 const { preflight } = require('./preflight.js');
+const { launchDesktop } = require('./launch.js');
 
 const REPO = path.resolve(__dirname, '..');
 const REMOTE = 'origin';
@@ -199,26 +199,7 @@ async function main() {
 
   // 6. 启动官方桌面。
   if (opts.noStart) { log('--no-start 结束'); return 0; }
-  return launch(pnpm);
-}
-
-/** 以前台方式启动桌面壳，让它的日志留在当前控制台。 */
-function launch(pnpm) {
-  const home = process.env.DSH_HOME
-    || path.join(process.env.USERPROFILE || process.env.HOME || '', '.dsh');
-  const env = {
-    ...process.env,
-    DSH_HOME: home,
-    DSH_DESKTOP_OPEN_DEVTOOLS: process.env.DSH_DESKTOP_OPEN_DEVTOOLS || '0',
-  };
-  log(`启动官方桌面 (DSH_HOME=${home})`);
-  const child = spawn(pnpm.exe, [...pnpm.prefix, 'run', 'start:desktop'], {
-    cwd: REPO, env, stdio: 'inherit', windowsHide: false,
-  });
-  return new Promise((resolve) => {
-    child.on('error', (e) => { warn(`启动失败: ${e.message}`); resolve(1); });
-    child.on('close', (code) => resolve(code === null ? 1 : code));
-  });
+  return launchDesktop(log, warn);
 }
 
 main()

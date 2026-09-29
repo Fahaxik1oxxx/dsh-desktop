@@ -56,6 +56,30 @@ pnpm run start:desktop  # 跳过构建，直接启动已有产物
 1. **清理 pnpm 死链。** pnpm 的 `node_modules/.pnpm/node_modules` 会残留已删除包的链接（`install`、`--force`、删 `.modules.yaml` 都报 “Already up to date”，不会清理）。官方开发启动器会遍历该目录并对每条链接 `realpathSync`，任何一条死链都会让启动直接 `ENOENT` 失败。判定标准只有两条：目标不存在，或目标不是包目录（没有 `package.json`）；包名与链接名不同的正常别名（如 `string-width-cjs`）保留。
 2. **盖章 exe 图标。** 见下节。
 
+## 启动路径：快速与完整
+
+上游 `pnpm run start:desktop` 每次都跑 `dev.ts`，它无条件做两件重活：
+
+1. `prepareDevelopmentProject` —— 把约 1500 个依赖链接镜像进一次性项目；
+2. `preparePrimaryRuntime` —— 完整冒烟：用随包 Python 导入 numpy/pandas、做 Office 文档往返转换、跑 `pip check`、核对 node/pnpm 版本。
+
+本机实测这条路要**约 100 秒**才能出窗口，而那两份准备结果是落在磁盘上、跨启动有效的。所以 `start.js` 先判断它是否仍然对应当前检出：
+
+| 条件 | 不成立时 |
+| --- | --- |
+| `apps/desktop/lib/main.js` 与 `apps/desktop-host/lib/index.js` 存在 | 回退完整启动 |
+| 目标平台的 primary-runtime 目录存在 | 回退完整启动 |
+| 一次性项目记录的桌面版本 == 当前 `apps/desktop/package.json` 版本 | 回退完整启动 |
+| 记录的工作区状态（git HEAD + `pnpm-lock.yaml` 修改时间）未变 | 回退完整启动 |
+
+全部成立就直接拉起 Electron（`launch.js` 按 `dev.ts` 的方式设置环境与参数），把日常启动压到几秒；任何一条不成立都回退到上游完整路径，那次运行会重建被校验的东西并更新记录。
+
+- `node start.js --check` 只打印这次会走哪条路以及原因。
+- 拉取新源码或改动依赖锁之后，**下一次**启动会是完整启动（约 100 秒），之后恢复快速。
+- 如果你自己跑过上游 `pnpm run start:desktop`，用 `node start.js --mark-prepared` 把当前状态记为已准备，下次即走快速路径。
+
+启动器还会清掉继承来的 `ELECTRON_RUN_AS_NODE`：DSH 自己的 Electron 子进程会设置它，一旦被继承，Electron 会按纯 Node 启动并对 `--remote-debugging-port` / `--user-data-dir` 报 `bad option` 直接退出。上游 `dev.ts` 只展开 `process.env`，没有这一步。
+
 ## Windows 图标
 
 上游既没有 `app.setAppUserModelId`，也没给主窗口指定 `icon`，所以任务栏、Alt+Tab 与 exe 图标都来自 Electron 可执行文件本身——未打包启动就是 Electron 默认图标。
@@ -103,6 +127,9 @@ Electron 在 Windows 上按可执行文件名判断 `app.isPackaged`（`process.
 desktop/                    ← 本仓库
   launch-hidden.vbs         无窗口启动（输出写 logs\desktop.log）
   start-official.cmd        启动（保留控制台）
+  start.js                  启动入口：preflight → 快速或完整启动；--check / --mark-prepared
+  launch.js                 决策采集与 Electron 启动；--check 的实现
+  launch-plan.js            能否跳过上游准备的纯判断
   update-and-start.cmd      更新 + 增量重建 + 启动
   update-and-start.js       编排：fetch → ff → install → build → launch
   preflight.js              启动前修复：清理 pnpm 死链 + 盖章 exe 图标
@@ -122,7 +149,8 @@ desktop/                    ← 本仓库
 | 命令 | 作用 |
 | --- | --- |
 | `npm test` | `node --test` |
-| `npm run check` | 等于 `update-and-start.cmd --check` |
+| `npm start` | 等于 `start-official.cmd` |
+| `npm run check` | 打印这次会走快速还是完整启动 |
 | `npm run update` | 等于 `update-and-start.cmd` |
 | `npm run stamp` | 单独盖章 exe 图标（`-- --force` 强制重盖） |
 

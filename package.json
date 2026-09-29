@@ -5,9 +5,10 @@
   "description": "Launcher and updater layer for the official DeepSeek Harness desktop (apps/desktop)",
   "license": "MIT",
   "scripts": {
+    "start": "node start.js",
     "test": "node --test",
     "stamp": "node stamp-electron-icon.js",
-    "check": "node update-and-start.js --check",
+    "check": "node start.js --check",
     "update": "node update-and-start.js"
   },
   "engines": {

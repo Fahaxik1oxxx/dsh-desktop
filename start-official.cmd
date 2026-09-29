@@ -28,12 +28,10 @@ set "DSH_DESKTOP_OPEN_DEVTOOLS=0"
 rem Only consulted when the Electron binary still has to be downloaded.
 set "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/"
 
-rem Fix the environment before launching: prune pnpm virtual-hoist links whose
-rem packages were removed (the upstream launcher realpathSyncs every link and
-rem fails with ENOENT on a dangling one), and stamp the Windows executable with
-rem the app icon because the upstream shell sets neither an AUMID nor a window
-rem icon, so an unpackaged launch shows Electron's default icon.
-"%NODE%" "%~dp0preflight.js"
-
-"%NODE%" "%ROOT%\node_modules\pnpm\bin\pnpm.cjs" run start:desktop
+rem Repair the environment, then launch. start.js prunes dangling pnpm
+rem virtual-hoist links (the upstream launcher realpathSyncs every link and
+rem fails with ENOENT on a dangling one), stamps the app icon into the
+rem executable, and skips the upstream preparation when its result is still
+rem valid for this checkout.
+"%NODE%" "%~dp0start.js"
 endlocal

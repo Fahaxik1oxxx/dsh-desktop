@@ -25,6 +25,9 @@
 desktop/                    ← 本仓库
   launch-hidden.vbs         无窗口启动：wscript 以 SW_HIDE 跑整条进程链，输出写 logs\desktop.log
   start-official.cmd        启动（保留控制台）
+  start.js                  启动入口：preflight → 快速或完整启动
+  launch.js                 状态采集与 Electron 启动；清掉继承的 ELECTRON_RUN_AS_NODE
+  launch-plan.js            能否跳过上游准备的纯判断
   update-and-start.cmd      更新 + 增量重建 + 启动
   update-and-start.js       编排：fetch → 脏检查 → ff 检查 → merge → install → build → launch
   preflight.js              启动前修复：清理 pnpm 死链 + 盖章 exe 图标
@@ -38,6 +41,16 @@ desktop/                    ← 本仓库
 ```
 
 本仓库只保留这一层。早期自包含 Electron 壳的代码（`main.js`、`preload.js`、`shell-update.js`、`server.js`、`updater.js`、`window-state.js` 等）已移除，可从 git 历史恢复；`proc.js` 与 `gitup.js` 是旧壳留下、这一层仍在复用的纯逻辑（子进程执行器与 git 判定）。
+
+## 快速启动
+
+上游 `dev.ts` 每次启动都无条件重做两份准备：镜像约 1500 个依赖链接，以及 primary-runtime 完整冒烟（Python 导入、Office 文档往返、`pip check`、node/pnpm 版本核对）。本机实测约 100 秒出窗口，而两份结果都落在磁盘上、跨启动有效。
+
+`launch-plan.js` 用四项状态判断结果是否仍然对应当前检出：两个构建产物存在、目标平台的 primary-runtime 存在、一次性项目记录的桌面版本等于当前 `apps/desktop/package.json` 版本、记录的工作区状态（git HEAD + `pnpm-lock.yaml` 修改时间）未变。全部成立时 `launch.js` 直接拉起 Electron（环境与参数按 `dev.ts` 逐项对齐）；任何一条不成立都回退 `pnpm run start:desktop`，并由那次运行更新记录。因此拉取新源码或改动依赖锁之后的下一次启动是完整的，之后恢复快速。
+
+`launch.js` 另外从子进程环境里删除 `ELECTRON_RUN_AS_NODE`：DSH 的 Electron 子进程会设置它，继承后 Electron 会按纯 Node 启动，对 `--remote-debugging-port` 与 `--user-data-dir` 报 `bad option` 并以 9 退出。上游只展开 `process.env`，没有这一步。
+
+`start.js --check` 打印本次决策与原因；`--mark-prepared` 把手动跑过上游启动器的检出记为已准备。
 
 ## 启动前的环境修复
 
