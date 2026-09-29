@@ -23,9 +23,13 @@
 
 ```
 desktop/                    ← 本仓库
-  start-official.cmd        只启动官方桌面（设置 DSH_HOME 与开发开关）
+  launch-hidden.vbs         无窗口启动：wscript 以 SW_HIDE 跑整条进程链，输出写 logs\desktop.log
+  start-official.cmd        启动（保留控制台）
   update-and-start.cmd      更新 + 增量重建 + 启动
   update-and-start.js       编排：fetch → 脏检查 → ff 检查 → merge → install → build → launch
+  preflight.js              启动前修复：清理 pnpm 死链 + 盖章 exe 图标
+  link-audit.js             识别并清理 pnpm virtual-hoist 死链
+  stamp-electron-icon.js    就地给 electron.exe 盖图标与产品名
   build-plan.js             变更文件 → 构建步骤（纯函数）
   gitup.js                  dirty / behind / lockfile / ff 判定（纯逻辑）
   proc.js                   子进程执行器（超时杀进程树）
@@ -33,13 +37,21 @@ desktop/                    ← 本仓库
   main.js 等                 原始自包含 Electron 壳（保留作参考与备选）
 ```
 
+## 启动前的环境修复
+
+两条启动路径都先跑 `preflight.js`，只做幂等的两件事，且都不碰上游源码。
+
+**pnpm 死链。** `node_modules/.pnpm/node_modules` 会留下已删包的链接；`pnpm install`、`--force`、删 `.modules.yaml` 都只比对锁文件，报 “Already up to date” 而不清理。官方开发启动器 `development-project.ts` 的 `mirrorDependencyLinks` 会遍历该目录并对每条链接 `realpathSync` 再读目标里的 `package.json`，因此一条死链就让整个启动 `ENOENT` 失败。判定只认两种失效：目标不存在，或目标不是包目录；链接名与包名不同的正常别名保留。
+
+**Windows exe 图标。** 上游既无 `app.setAppUserModelId` 也未给主窗口指定 `icon`，任务栏与 exe 图标全部来自 Electron 可执行文件。这里**就地**盖章 `dist\electron.exe`，而不是复制改名：Electron 在 Windows 上按可执行文件名判定 `app.isPackaged`，改名会让官方桌面走打包分支（`development = !app.isPackaged` 变 false），转而去读 `apps/desktop/dsh/desktop-runtime.json` 并启动失败。幂等依据是 `dist\.dsh-icon-stamp.json` 里的图标摘要与盖章后的 exe 大小；重装依赖还原 exe 字节后大小变化，下次启动自动重盖。
+
 ## 更新流程
 
 1. `git status --porcelain --untracked-files=no`：有 tracked 改动则跳过更新、只启动。未跟踪文件不算，避免误判。
 2. `git fetch --prune --no-tags origin master`：失败按离线处理，只启动。
 3. 本地与 `FETCH_HEAD` 相同即已是最新；否则 `merge-base --is-ancestor HEAD FETCH_HEAD` 判定可快进，分叉则跳过更新、只启动。
 4. `git diff --name-only preSha FETCH_HEAD` 得到变更集，`plan = selectDesktopBuildPlan(changed)`；`pnpm-lock.yaml` 在变更集内才 `pnpm install`。
-5. `git merge --ff-only FETCH_HEAD`，然后按 plan 顺序跑构建，最后 `start:desktop`。
+5. `git merge --ff-only FETCH_HEAD`，`preflight()` 修好死链与 exe 图标，然后按 plan 顺序跑构建，最后 `start:desktop`。
 
 `--check` 在第 4 步之后打印结论并退出，不做任何修改。
 

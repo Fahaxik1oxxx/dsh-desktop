@@ -8,6 +8,9 @@ rem so run `pnpm run dev:desktop` once after pulling new sources.
 rem
 rem First launch also prepares the bundled runtime (Node + Python, ~270 MB) and
 rem can take several minutes; a slow or filtered network may need HTTPS_PROXY.
+rem
+rem Keep this file ASCII-only with CRLF endings: cmd.exe mis-parses LF-only
+rem batch files that contain UTF-8 multibyte characters.
 setlocal
 set "ROOT=%~dp0.."
 set "NODE=D:\Compile\Node\node.exe"
@@ -24,6 +27,13 @@ set "DSH_DESKTOP_OPEN_DEVTOOLS=0"
 
 rem Only consulted when the Electron binary still has to be downloaded.
 set "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/"
+
+rem Fix the environment before launching: prune pnpm virtual-hoist links whose
+rem packages were removed (the upstream launcher realpathSyncs every link and
+rem fails with ENOENT on a dangling one), and stamp the Windows executable with
+rem the app icon because the upstream shell sets neither an AUMID nor a window
+rem icon, so an unpackaged launch shows Electron's default icon.
+"%NODE%" "%~dp0preflight.js"
 
 "%NODE%" "%ROOT%\node_modules\pnpm\bin\pnpm.cjs" run start:desktop
 endlocal

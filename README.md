@@ -24,8 +24,11 @@ pnpm run start:desktop  # 跳过构建，直接启动已有产物
 
 | 入口 | 作用 |
 | --- | --- |
-| 桌面快捷方式 / 开始菜单「DeepSeek Harness」 | 只启动官方桌面 |
-| `desktop\start-official.cmd` | 同上，命令行入口 |
+| 桌面「DeepSeek Harness」 | 无控制台窗口启动官方桌面 |
+| 桌面「DeepSeek Harness (更新并启动)」 | 更新 + 增量重建 + 启动（保留控制台以便看构建进度） |
+| 桌面「DeepSeek Harness (查看启动日志)」 | 打开最近一次无窗口启动的输出 |
+| `desktop\launch-hidden.vbs` | 无窗口启动：`wscript.exe` 以 SW_HIDE 跑整条进程链，输出写 `logs\desktop.log` |
+| `desktop\start-official.cmd` | 启动（保留控制台，便于直接看输出） |
 | `desktop\update-and-start.cmd` | 更新 + 增量重建 + 启动 |
 | `desktop\update-and-start.cmd --check` | 只报告本地/远端状态与将要执行的构建 |
 
@@ -42,6 +45,30 @@ pnpm run start:desktop  # 跳过构建，直接启动已有产物
 两个启动器都会设置 `DSH_HOME`（默认 `%USERPROFILE%\.dsh`），让官方桌面直接用你已有的会话、工作区与凭据；不设置的话官方开发启动器会在 `apps/desktop/.desktop-build` 下另建一个空 home。
 
 首次启动会准备随包运行时（Node + Python，约 270 MB），可能要好几分钟；网络受限时设好 `HTTPS_PROXY` 后重跑即可。
+
+`.cmd` 与 `.vbs` 必须保持 **CRLF 行尾且纯 ASCII**：cmd.exe 会误解析 LF-only 批处理，而其中的 UTF-8 多字节字符会触发 DBCS 前导字节错位。`.gitattributes` 已声明这两类文件为 CRLF。
+
+## 启动前的环境修复（preflight）
+
+两条启动路径都会先跑 `preflight.js`，它只做幂等的两件事：
+
+1. **清理 pnpm 死链。** pnpm 的 `node_modules/.pnpm/node_modules` 会残留已删除包的链接（`install`、`--force`、删 `.modules.yaml` 都报 “Already up to date”，不会清理）。官方开发启动器会遍历该目录并对每条链接 `realpathSync`，任何一条死链都会让启动直接 `ENOENT` 失败。判定标准只有两条：目标不存在，或目标不是包目录（没有 `package.json`）；包名与链接名不同的正常别名（如 `string-width-cjs`）保留。
+2. **盖章 exe 图标。** 见下节。
+
+## Windows 图标
+
+上游既没有 `app.setAppUserModelId`，也没给主窗口指定 `icon`，所以任务栏、Alt+Tab 与 exe 图标都来自 Electron 可执行文件本身——未打包启动就是 Electron 默认图标。
+
+这一层**就地**给 `dist\electron.exe` 盖章应用图标与产品名，而**不是**复制改名成 `DeepSeekHarness.exe`：
+
+| 可执行文件 | `app.isPackaged` |
+| --- | --- |
+| `electron.exe` | `false` → 官方桌面正确进入开发模式 |
+| `DeepSeekHarness.exe` | `true` → 官方桌面误判为已打包，去找 `apps/desktop/dsh/desktop-runtime.json` 并启动失败 |
+
+Electron 在 Windows 上按可执行文件名判断 `app.isPackaged`（`process.defaultApp` 是另一个基于参数的信号，两者不等价）。所以改名这个老办法会直接破坏官方桌面的开发模式判定。
+
+盖章用仓库已带的 `rcedit`（`desktop/node_modules/rcedit`），幂等判断记录在 `dist\.dsh-icon-stamp.json`：标记里的图标摘要 + 盖章后的 exe 大小都匹配才跳过；重装依赖把 exe 还原成原始字节后大小会变，下次启动自动重盖。
 
 ## 增量构建规则
 
@@ -64,14 +91,19 @@ pnpm run start:desktop  # 跳过构建，直接启动已有产物
 
 ```
 desktop/                    ← 本仓库
-  start-official.cmd        只启动官方桌面
+  launch-hidden.vbs         无窗口启动（输出写 logs\desktop.log）
+  start-official.cmd        启动（保留控制台）
   update-and-start.cmd      更新 + 增量重建 + 启动
   update-and-start.js       编排：fetch → ff → install → build → launch
+  preflight.js              启动前修复：清理 pnpm 死链 + 盖章 exe 图标
+  link-audit.js             pnpm virtual-hoist 死链的识别与清理
+  stamp-electron-icon.js    就地给 electron.exe 盖图标与产品名
   build-plan.js             变更文件 → 构建步骤
   gitup.js                  dirty / behind / lockfile / ff 判定（纯逻辑）
   proc.js                   子进程执行器（超时杀进程树）
+  open-log.cmd              打开最近一次无窗口启动的日志
   tests/                    node:test
-  assets/                   快捷方式图标（由官方 icon-windows.png 生成多尺寸 ICO）
+  assets/                   快捷方式图标与 exe 图标（由官方 icon-windows.png 生成多尺寸 ICO）
 ```
 
 ## 原始桌面壳

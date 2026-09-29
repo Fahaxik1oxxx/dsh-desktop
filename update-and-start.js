@@ -11,6 +11,7 @@ const { spawn } = require('node:child_process');
 const { run } = require('./proc.js');
 const { hasTrackedChanges, isBehind } = require('./gitup.js');
 const { selectDesktopBuildPlan } = require('./build-plan.js');
+const { preflight } = require('./preflight.js');
 
 const REPO = path.resolve(__dirname, '..');
 const REMOTE = 'origin';
@@ -167,6 +168,14 @@ async function main() {
       log(`已快进到 ${(await gitOut(['rev-parse', 'HEAD'])).slice(0, 8)} (${elapsed(t)})`);
     }
   }
+
+  // 3.5 启动前修环境：清理 pnpm hoist 死链、盖章 Windows exe 图标。
+  // 官方启动器遍历 hoist 目录时对每条链接 realpathSync，死链会让启动直接 ENOENT 失败。
+  const fixed = preflight(REPO);
+  if (fixed.pruned.length > 0) {
+    log(`清理失效依赖链接 ${fixed.pruned.length} 个: ${fixed.pruned.map((p) => p.name).join(', ')}`);
+  }
+  log(`exe 图标: ${fixed.stamp.reason}`);
 
   // 4. 依赖：只有锁文件真的变了才装。
   if (canUpdate && lockChanged) {
