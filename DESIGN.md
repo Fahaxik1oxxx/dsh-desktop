@@ -33,7 +33,8 @@ desktop/                    ← 本仓库
   build-plan.js             变更文件 → 构建步骤（纯函数）
   gitup.js                  dirty / behind / lockfile / ff 判定（纯逻辑）
   proc.js                   子进程执行器（超时杀进程树）
-  assets/deepseek-official.ico  由官方 icon-windows.png 生成的多尺寸 ICO
+  assets/deepseek-win.ico   exe / 任务栏图标（BMP 帧）
+  assets/deepseek.ico       快捷方式图标（PNG 帧）
   main.js 等                 原始自包含 Electron 壳（保留作参考与备选）
 ```
 
@@ -43,7 +44,9 @@ desktop/                    ← 本仓库
 
 **pnpm 死链。** `node_modules/.pnpm/node_modules` 会留下已删包的链接；`pnpm install`、`--force`、删 `.modules.yaml` 都只比对锁文件，报 “Already up to date” 而不清理。官方开发启动器 `development-project.ts` 的 `mirrorDependencyLinks` 会遍历该目录并对每条链接 `realpathSync` 再读目标里的 `package.json`，因此一条死链就让整个启动 `ENOENT` 失败。判定只认两种失效：目标不存在，或目标不是包目录；链接名与包名不同的正常别名保留。
 
-**Windows exe 图标。** 上游既无 `app.setAppUserModelId` 也未给主窗口指定 `icon`，任务栏与 exe 图标全部来自 Electron 可执行文件。这里**就地**盖章 `dist\electron.exe`，而不是复制改名：Electron 在 Windows 上按可执行文件名判定 `app.isPackaged`，改名会让官方桌面走打包分支（`development = !app.isPackaged` 变 false），转而去读 `apps/desktop/dsh/desktop-runtime.json` 并启动失败。幂等依据是 `dist\.dsh-icon-stamp.json` 里的图标摘要与盖章后的 exe 大小；重装依赖还原 exe 字节后大小变化，下次启动自动重盖。
+**Windows exe 图标。** 上游既无 `app.setAppUserModelId` 也未给主窗口指定 `icon`，任务栏与 exe 图标全部来自 Electron 可执行文件。这里**就地**盖章 `dist\electron.exe`，而不是复制改名：Electron 在 Windows 上按可执行文件名判定 `app.isPackaged`，改名会让官方桌面走打包分支（`development = !app.isPackaged` 变 false），转而去读 `apps/desktop/dsh/desktop-runtime.json` 并启动失败。幂等依据是 `dist\.dsh-icon-stamp.json` 里的图标摘要与盖章后的 exe 大小；重装依赖还原 exe 字节后大小变化，下次启动自动重盖。图标用本仓库自带的 `assets/deepseek-win.ico`，不用上游 `resources` 里的图。
+
+正在运行的实例会锁住 exe，此时盖章失败只告警不阻断启动；因为标记记录的摘要没更新，下次启动会自动补上。
 
 ## 更新流程
 

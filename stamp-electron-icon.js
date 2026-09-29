@@ -16,7 +16,7 @@ const { spawnSync } = require('node:child_process');
 
 const REPO = path.resolve(__dirname, '..');
 const APP = path.join(REPO, 'apps', 'desktop');
-const ICON = path.join(__dirname, 'assets', 'deepseek-official.ico');
+const ICON = path.join(__dirname, 'assets', 'deepseek-win.ico');
 const MARKER = '.dsh-icon-stamp.json';
 const RENAMED_COPY = 'DeepSeekHarness.exe';
 

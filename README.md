@@ -24,13 +24,14 @@ pnpm run start:desktop  # 跳过构建，直接启动已有产物
 
 | 入口 | 作用 |
 | --- | --- |
-| 桌面「DeepSeek Harness」 | 无控制台窗口启动官方桌面 |
-| 桌面「DeepSeek Harness (更新并启动)」 | 更新 + 增量重建 + 启动（保留控制台以便看构建进度） |
-| 桌面「DeepSeek Harness (查看启动日志)」 | 打开最近一次无窗口启动的输出 |
+| 桌面 / 开始菜单「DeepSeek Harness」 | 无控制台窗口启动官方桌面（唯一快捷方式） |
 | `desktop\launch-hidden.vbs` | 无窗口启动：`wscript.exe` 以 SW_HIDE 跑整条进程链，输出写 `logs\desktop.log` |
 | `desktop\start-official.cmd` | 启动（保留控制台，便于直接看输出） |
-| `desktop\update-and-start.cmd` | 更新 + 增量重建 + 启动 |
+| `desktop\update-and-start.cmd` | 更新 + 增量重建 + 启动（保留控制台以便看构建进度） |
 | `desktop\update-and-start.cmd --check` | 只报告本地/远端状态与将要执行的构建 |
+| `desktop\open-log.cmd` | 打开最近一次无窗口启动的输出 |
+
+桌面只放一个快捷方式；更新与看日志是维护动作，从 `desktop\` 目录里跑对应的 `.cmd`。
 
 选项：
 
@@ -70,6 +71,15 @@ Electron 在 Windows 上按可执行文件名判断 `app.isPackaged`（`process.
 
 盖章用仓库已带的 `rcedit`（`desktop/node_modules/rcedit`），幂等判断记录在 `dist\.dsh-icon-stamp.json`：标记里的图标摘要 + 盖章后的 exe 大小都匹配才跳过；重装依赖把 exe 还原成原始字节后大小会变，下次启动自动重盖。
 
+图标取自本仓库自带的两份图标，都是本机原本在用的那张图，而不是上游的 `apps/desktop/resources/*`：
+
+| 文件 | 用途 |
+| --- | --- |
+| `assets\deepseek-win.ico` | 盖章进 `electron.exe`（任务栏 / Alt+Tab / exe） |
+| `assets\deepseek.ico` | 桌面与开始菜单快捷方式 |
+
+上游托盘图标 `apps/desktop/resources/tray-windows.ico` 是上游资源，这一层不改它。
+
 ## 增量构建规则
 
 变更文件 → `pnpm run` 步骤：
@@ -103,7 +113,8 @@ desktop/                    ← 本仓库
   proc.js                   子进程执行器（超时杀进程树）
   open-log.cmd              打开最近一次无窗口启动的日志
   tests/                    node:test
-  assets/                   快捷方式图标与 exe 图标（由官方 icon-windows.png 生成多尺寸 ICO）
+  assets/deepseek-win.ico   exe / 任务栏图标（BMP 帧，Windows 资源用）
+  assets/deepseek.ico       快捷方式图标（PNG 帧）
 ```
 
 ## 原始桌面壳
