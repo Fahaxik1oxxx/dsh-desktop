@@ -35,8 +35,9 @@ desktop/                    ← 本仓库
   proc.js                   子进程执行器（超时杀进程树）
   assets/deepseek-win.ico   exe / 任务栏图标（BMP 帧）
   assets/deepseek.ico       快捷方式图标（PNG 帧）
-  main.js 等                 原始自包含 Electron 壳（保留作参考与备选）
 ```
+
+本仓库只保留这一层。早期自包含 Electron 壳的代码（`main.js`、`preload.js`、`shell-update.js`、`server.js`、`updater.js`、`window-state.js` 等）已移除，可从 git 历史恢复；`proc.js` 与 `gitup.js` 是旧壳留下、这一层仍在复用的纯逻辑（子进程执行器与 git 判定）。
 
 ## 启动前的环境修复
 

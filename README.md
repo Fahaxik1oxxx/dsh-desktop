@@ -117,16 +117,16 @@ desktop/                    ← 本仓库
   assets/deepseek.ico       快捷方式图标（PNG 帧）
 ```
 
-## 原始桌面壳
+## npm 脚本
 
-本仓库最初实现过一个自包含的 Electron 壳（`main.js`、`preload.js`、`shell-update.js`、`shell-log.js`、`server.js`、`updater.js` 等），自带托盘、更新芯片、应用内日志面板与侧栏布局修正。官方桌面已覆盖其中的窗口、托盘与打包能力，日常入口已切到官方桌面，这部分代码保留作参考与备选：
+| 命令 | 作用 |
+| --- | --- |
+| `npm test` | `node --test` |
+| `npm run check` | 等于 `update-and-start.cmd --check` |
+| `npm run update` | 等于 `update-and-start.cmd` |
+| `npm run stamp` | 单独盖章 exe 图标（`-- --force` 强制重盖） |
 
-```sh
-npm start                 # 直接跑旧壳（需先按 config.example.json 准备 config.json）
-npm run shortcut          # 旧壳的桌面快捷方式（会覆盖指向官方桌面的快捷方式）
-```
-
-旧壳的更新器与这一层共用 `gitup.js`、`proc.js`，所以两边的 git 判定语义一致。
+唯一的运行期依赖是 `rcedit`（盖章 exe 用）；Electron 由上游 `apps/desktop` 自己声明。
 
 ## 测试
 

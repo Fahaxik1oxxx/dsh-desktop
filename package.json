@@ -1,16 +1,14 @@
 {
   "name": "dsh-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "DeepSeek Harness desktop shell (Electron)",
+  "description": "Launcher and updater layer for the official DeepSeek Harness desktop (apps/desktop)",
   "license": "MIT",
-  "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "start:app": "cmd /c start-desktop.cmd",
     "test": "node --test",
-    "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set-shortcut.ps1",
-    "postinstall": "node -e \"if(process.platform!=='win32')process.exit(0);require('node:child_process').spawnSync('cmd.exe',['/c',require('node:path').join('scripts','stamp-desktop-exe.cmd')],{stdio:'inherit',windowsHide:true})\""
+    "stamp": "node stamp-electron-icon.js",
+    "check": "node update-and-start.js --check",
+    "update": "node update-and-start.js"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -20,7 +18,6 @@
     "url": "https://github.com/Fahaxik1oxxx/dsh-desktop.git"
   },
   "devDependencies": {
-    "electron": "^44.1.1",
     "rcedit": "^5.0.1"
   }
 }
