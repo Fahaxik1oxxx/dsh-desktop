@@ -1,53 +1,60 @@
-# DeepSeek Harness 桌面版
+# DeepSeek Harness 桌面增强层
 
-日期：2026-09-10
-状态：已实现。本仓库是独立 git 仓库，通常嵌套在上游 `deepseek-harness` 克隆的 `desktop/` 下；外层用 `.git/info/exclude` 忽略它。更新链路只 fast-forward 上游。
+日期：2026-09-29
+状态：已实现。本仓库是独立 git 仓库，通常嵌套在上游 `deepseek-harness` 克隆的 `desktop/` 下；外层用 `.git/info/exclude` 忽略它。
 
 ## 目标
 
-1. 把本地 dsh web（默认 `127.0.0.1:3080`）包成 Electron 桌面应用。
-2. 用桌面/开始菜单快捷方式启动，无系统浏览器、无控制台窗口。
-3. 检测 `github.com/deepseek-ai/deepseek-harness` 更新：设置旁出现「更新」→ 用户点击 → 快进合并 + 按变更增量重建 + 重启服务器。
+1. 用官方桌面端（上游 `apps/desktop`）作为日常桌面应用，不复制也不修改上游代码。
+2. 官方 release 不发布安装包，因此本机路径是源码启动；这一层负责让源码检出保持最新并只重建必要部分。
+3. 上游检出始终干净，`git pull` 永远可 fast-forward。
 
 ## 非目标
 
-- 不生成 NSIS 安装包。
-- 不自动更新本 Electron 壳。
-- 不做 Tauri、不做多平台打包。
+- 不修改上游任何文件（因此不能在上游源码里加更新 UI）。
+- 不生成 NSIS / DMG 安装包（需要签名凭据，且官方已有打包流水线）。
+- 不替代官方桌面自带的托盘、窗口状态、打包版本自动更新。
+
+## 为什么是外置层
+
+把改动打进 `apps/desktop` 会让每次 `git pull` 都冲突，而“干净工作区 + 只快进”正是自动更新成立的前提。官方桌面还自带宽高耦合的 Host、IPC 与打包脚本，补丁面越大越难跟上上游。所以这一层只做启动前后的事：更新、按需安装、增量构建、启动。
 
 ## 目录
 
 ```
-desktop/                       ← 本仓库
-  assets/                      窗口、托盘、盖章 exe 图标
-    deepseek.ico               PNG 帧（通用）
-    deepseek-win.ico           BMP 帧（Windows 快捷方式 / 盖章 exe）
-  scripts/                     postinstall 盖章、快捷方式、冒烟
-  tests/                       node:test
-  main.js                      主进程：服务器、窗口、托盘、更新、日志面板
-  server.js                    spawn / 端口就绪 / 停止
-  updater.js                   git fetch / merge --ff-only / install / 增量构建
-  update-build.js              按 diff 选构建命令
-  config-lib.js                读取并校验 config.json
-  shell-layout.js              为窗口控件留出右上角
-  shell-update.js / shell-log.js  注入到页面的更新芯片与日志面板
-  start-desktop.cmd            启动盖章后的 DeepSeekHarness.exe
+desktop/                    ← 本仓库
+  start-official.cmd        只启动官方桌面（设置 DSH_HOME 与开发开关）
+  update-and-start.cmd      更新 + 增量重建 + 启动
+  update-and-start.js       编排：fetch → 脏检查 → ff 检查 → merge → install → build → launch
+  build-plan.js             变更文件 → 构建步骤（纯函数）
+  gitup.js                  dirty / behind / lockfile / ff 判定（纯逻辑）
+  proc.js                   子进程执行器（超时杀进程树）
+  assets/deepseek-official.ico  由官方 icon-windows.png 生成的多尺寸 ICO
+  main.js 等                 原始自包含 Electron 壳（保留作参考与备选）
 ```
 
-`config.json` 已被 gitignore。`icon` 可省略：Windows 优先 `assets/deepseek-win.ico`。
+## 更新流程
 
-## 运行时
+1. `git status --porcelain --untracked-files=no`：有 tracked 改动则跳过更新、只启动。未跟踪文件不算，避免误判。
+2. `git fetch --prune --no-tags origin master`：失败按离线处理，只启动。
+3. 本地与 `FETCH_HEAD` 相同即已是最新；否则 `merge-base --is-ancestor HEAD FETCH_HEAD` 判定可快进，分叉则跳过更新、只启动。
+4. `git diff --name-only preSha FETCH_HEAD` 得到变更集，`plan = selectDesktopBuildPlan(changed)`；`pnpm-lock.yaml` 在变更集内才 `pnpm install`。
+5. `git merge --ff-only FETCH_HEAD`，然后按 plan 顺序跑构建，最后 `start:desktop`。
 
-- `spawn` `node apps/cli/lib/bin.js web --no-open`，解析带 token 的环回 URL 后加载。
-- 关窗隐藏到托盘。无系统标题栏；自绘最小化/最大化/关闭。会话头「打开侧边栏」与右栏折叠按钮左移，不与窗口控件重叠。
-- 托盘：显示/隐藏、重启服务器、在浏览器打开、打开日志、检查更新。打开日志是窗口内实时尾巴（复制 / 打开文件夹 / 记事本）。手动检查更新显示应用内状态，不依赖系统通知。
-- 有可用更新时，「设置」旁出现「更新」。确认后：`git merge --ff-only FETCH_HEAD`（检测阶段已 fetch）→ lockfile 变化才 `pnpm install` → `selectBuildCommand` 选 `build:web` / `build:lib+web` / 完整 `build` / 跳过。
-- 更新检测失败静默。本地已分叉或有 tracked 改动则中止。
-- `npm install` 把 `electron.exe` 复制为 `DeepSeekHarness.exe` 并盖章 `assets/deepseek-win.ico`。`npm run shortcut` 让桌面/开始菜单快捷方式图标指向该 exe。
+`--check` 在第 4 步之后打印结论并退出，不做任何修改。
+
+## 增量构建的边界
+
+- 文档与仓库元数据（`docs/`、`.agents/`、`snapshots/`、`.github/`、`website/`、`benchmarks/`、`examples/`、`*.md`、`LICENSE`）不进入任何产物，跳过全部构建。
+- `packages/client/**` 同时算 lib 与 web：前者编译 client 面，后者打前端 bundle。
+- `native/**` 额外跑 `build:native-system`（宿主 addon）。
+- 认不出的新区域回退完整 `build`；规则判断错时用 `--full`。
+- `apps/desktop/lib/main.js` 与 `apps/desktop-host/lib/index.js` 缺失时无视增量判断，强制完整构建。
 
 ## 测试
 
 ```sh
-npm test
-node scripts/server-smoke.js
+node --test
 ```
+
+纯逻辑（构建规划、git 判定、路径转换）全覆盖。嵌套在上游检出内时额外校验：规划出的每个 `pnpm run` 脚本名都真实存在于官方 `package.json`。

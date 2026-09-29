@@ -1,107 +1,98 @@
-# dsh-desktop — DeepSeek Harness 桌面壳
+# dsh-desktop — 官方 DeepSeek Harness 桌面的外置增强层
 
-把本地运行的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) web 界面包成 Electron 桌面应用。本仓库只包含壳：窗口、托盘、服务器生命周期、应用内更新。web 页面来自上游 `apps/web`，不包含也不修改上游代码。上游 MIT，版权归 DeepSeek。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 自带官方桌面端，位于该仓库的 `apps/desktop`（Electron 壳 + 自己的 Host + 打包脚本）。本仓库不复制也不修改它，只提供官方桌面缺少的那一半：**源码检出的更新与增量重建**。
 
-## 工作方式
-
-```
-deepseek-harness/            ← 上游克隆（保持可 fast-forward）
-  └─ desktop/                ← 本仓库（独立 git，嵌套在外层克隆内）
-       assets/               窗口 / 托盘 / 盖章 exe 图标
-       scripts/              盖章 exe、快捷方式、冒烟测试
-       tests/                node:test
-```
-
-- 主进程 `spawn` `node apps/cli/lib/bin.js web --no-open`（默认 127.0.0.1:3080）。从启动输出解析带 token 的环回 URL 后只在 Electron 窗口加载；`--no-open` 禁止上游打开系统浏览器。启动前预检端口占用。
-- 关窗隐藏到托盘，不销毁窗口。无系统标题栏：自绘最小化/最大化/关闭叠在右上角。会话头「打开侧边栏」和右栏折叠按钮会左移，避免叠在关闭键上。
-- 窗口位置/大小/最大化跨启动记忆（`window-state.json`，机器本地文件）；显示器拔掉或分辨率变化时自动回落到可见区域。
-- 服务意外退出自动重启（最多 5 次）；主动停止/退出应用不会误触发。
-- 更新器每 `checkIntervalMs`（默认 30 分钟）`git fetch --prune --no-tags origin master`。发现新版本时，侧栏「设置」旁出现「更新」。托盘「检查更新」把窗口提到前台，应用内显示检查中 / 已是最新 / 无法检查 / 无法快进，不依赖系统通知。
-- 点「更新」后：本地 `git merge --ff-only FETCH_HEAD`（不再二次 fetch）→ lockfile 变化时 `corepack pnpm install` → 按 diff 选最短构建 → 重启服务器。进度在主窗口右下角。
-- 构建选择：仅文档/notes/snapshots 跳过；仅 `apps/web` 或 `packages/client` 走 `npm run build:web`；普通代码走 `npm run build:lib && npm run build:web`；动到 `native/` 才跑完整 `npm run build`。
-- 外层克隆只允许 fast-forward。工作区有 tracked 改动或本地已分叉时中止，不覆盖本地内容。
-- 网页新开链接交给系统浏览器。托盘：显示/隐藏、重启服务器、在浏览器打开、打开日志、检查更新；tooltip 带当前 HEAD。打开日志是窗口内实时尾巴（复制 / 打开文件夹 / 记事本），Esc 关闭。
-
-## 环境要求
-
-- Windows + [Git for Windows](https://gitforwindows.org/)
-- Node.js v22.12+（建议与上游一致：`^22.19 || >=24`）
-- 上游已 `pnpm install && pnpm run build`（服务器从 `apps/cli/lib/bin.js` 启动）
-
-## 从零安装
+官方在 GitHub 上的 release 只有变更说明、没有安装包资源，所以本机使用官方桌面就是从源码启动：
 
 ```sh
-# 1. 克隆上游并构建
-git clone https://github.com/deepseek-ai/deepseek-harness.git
-cd deepseek-harness
-pnpm install
-pnpm run build
-
-# 2. 在上游根目录创建 .env（没有它界面能启动，但无法对话）
-#    DEEPSEEK_API_KEY=sk-xxxxxxxx
-
-# 3. 克隆本仓库并安装
-cd ..
-git clone https://github.com/Fahaxik1oxxx/dsh-desktop.git
-cd dsh-desktop
-npm install
-
-# 4. 本机配置（Windows cmd 用 copy）
-cp config.example.json config.json
-
-# 5. 启动（任务栏图标请用下一节的快捷方式，不要直接 npm start）
-npm start
+pnpm run dev:desktop    # 构建后启动（会跑完整构建）
+pnpm run start:desktop  # 跳过构建，直接启动已有产物
 ```
 
-已有构建好的上游克隆时从第 3 步开始。若把本仓库放在上游的 `desktop/` 下，向外层 `.git/info/exclude` 追加 `desktop/`，以免污染上游工作区。
+## 为什么需要这一层
 
-编辑 `config.json`（已被 gitignore）：
+`start:desktop` 不知道源码是否比产物新，`dev:desktop` 每次都跑完整构建。于是每次 `git pull` 之后只有两个选择：用可能过期的产物启动，或者等一次完整构建。官方桌面的自动更新只服务打包版本，管不到源码检出。
 
-| 字段 | 含义 |
+这一层补上：
+
+- **只快进**：先 fetch，确认本地落后且可 fast-forward 才合并；工作区有 tracked 改动或已分叉就跳过更新并照常启动，绝不覆盖本地内容。
+- **依赖按需**：只有 `pnpm-lock.yaml` 真的变了才跑 `pnpm install`。
+- **增量构建**：按变更文件选最短的构建组合，纯文档更新完全不构建。
+- **缺产物兜底**：`apps/desktop/lib` 或 `apps/desktop-host/lib` 缺失时强制完整构建，而不是按「无变更」跳过。
+
+## 使用
+
+| 入口 | 作用 |
 | --- | --- |
-| `repo` | 外层 deepseek-harness 克隆的绝对路径 |
-| `nodeExe` | node.exe 绝对路径 |
-| `bashExe` | Git Bash `bash.exe`（通常 `C:\Program Files\Git\usr\bin\bash.exe`） |
-| `gitExe` | 可选。缺省从 `bashExe` 推导（新版 Git for Windows 在 `cmd\git.exe`） |
-| `serverArgs` | 默认 `["apps/cli/lib/bin.js", "web", "--no-open"]` |
-| `port` / `url` | 服务器端口与加载地址 |
-| `icon` | 可选。相对路径相对 `config.json`。省略时 Windows 优先 `assets/deepseek-win.ico` |
-| `checkIntervalMs` | 更新检测间隔，毫秒 |
-| `autoStart` | 可选，开机自启，默认 `false` |
-| `hotkey` | 可选，全局呼出/隐藏，如 `Alt+Shift+D`；空字符串关闭 |
+| 桌面快捷方式 / 开始菜单「DeepSeek Harness」 | 只启动官方桌面 |
+| `desktop\start-official.cmd` | 同上，命令行入口 |
+| `desktop\update-and-start.cmd` | 更新 + 增量重建 + 启动 |
+| `desktop\update-and-start.cmd --check` | 只报告本地/远端状态与将要执行的构建 |
 
-Electron 下载慢可设 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
+选项：
 
-## 桌面图标与启动
-
-Windows 任务栏按可执行文件名分组。直接跑 `electron.exe` 或 `npm start` 永远是 Electron 默认图标。`npm install` 会复制并盖章 `DeepSeekHarness.exe`。请用桌面快捷方式或 `start-desktop.cmd`：
-
-```sh
-npm run shortcut
-```
-
-快捷方式图标取自盖章后的 exe，不依赖会搬家的 `.ico` 路径。若桌面图标空白或任务栏仍钉着旧 Electron 图标：再跑一次 `npm run shortcut`，取消固定后从新快捷方式打开并重新固定。
-
-## 日常使用
-
-| 动作 | 结果 |
+| 选项 | 作用 |
 | --- | --- |
-| 关窗 | 隐藏到托盘，内容保留 |
-| 托盘左键 / 显示隐藏 | 恢复或隐藏主窗口 |
-| 检查更新 | 窗口前台 + 设置旁状态芯片；已是最新显示约 6 秒 |
-| 有新版本时点「更新」 | 快进合并 + 增量构建 + 重启服务 |
-| 打开日志 | 窗口内实时尾巴，不必先开记事本 |
-| 重启服务器 | 停掉再拉起本地 dsh web |
+| `--check` | 只报告，不修改任何东西 |
+| `--full` | 忽略增量判断，跑完整 `pnpm run build` |
+| `--no-build` | 只更新，不构建 |
+| `--no-start` | 更新后不启动桌面 |
+| `--git <path>` | 指定 git 可执行文件（默认 PATH 上的 `git`） |
 
-## 开发与测试
+两个启动器都会设置 `DSH_HOME`（默认 `%USERPROFILE%\.dsh`），让官方桌面直接用你已有的会话、工作区与凭据；不设置的话官方开发启动器会在 `apps/desktop/.desktop-build` 下另建一个空 home。
 
-```sh
-npm test                         # 单元测试
-node scripts/server-smoke.js     # 非 GUI 冒烟：拉起真实服务器，停掉后断言端口释放
+首次启动会准备随包运行时（Node + Python，约 270 MB），可能要好几分钟；网络受限时设好 `HTTPS_PROXY` 后重跑即可。
+
+## 增量构建规则
+
+变更文件 → `pnpm run` 步骤：
+
+| 变更位置 | 构建步骤 |
+| --- | --- |
+| 仅 `*.md` / `docs/` / `.agents/` / `snapshots/` / `LICENSE` | 不构建 |
+| 仅 `.github/` / `website/` / `benchmarks/` / `examples/` | 不构建 |
+| 仅 `apps/desktop/**` | `build:desktop` |
+| 仅 `apps/web/**` | `build:web` |
+| `packages/client/**` | `build:lib` + `build:web` |
+| 其它 `packages/**`、`apps/cli/**`、`apps/desktop-host/**`、`vendor/**`、`scripts/**`、根配置文件 | `build:lib` |
+| `native/**` | `build:native-system` + `build:lib` |
+| 认不出的新区域 | 完整 `build` |
+
+每一步都必须在官方 `package.json` 里真实存在，`tests/build-plan.test.js` 会在嵌套检出时校验这一点。规则判断错时可以 `--full` 覆盖。
+
+## 目录
+
+```
+desktop/                    ← 本仓库
+  start-official.cmd        只启动官方桌面
+  update-and-start.cmd      更新 + 增量重建 + 启动
+  update-and-start.js       编排：fetch → ff → install → build → launch
+  build-plan.js             变更文件 → 构建步骤
+  gitup.js                  dirty / behind / lockfile / ff 判定（纯逻辑）
+  proc.js                   子进程执行器（超时杀进程树）
+  tests/                    node:test
+  assets/                   快捷方式图标（由官方 icon-windows.png 生成多尺寸 ICO）
 ```
 
-PATH 里没有 node 时用绝对路径，例如 `"D:\Compile\Node\node.exe" --test`。架构见 [DESIGN.md](DESIGN.md)。
+## 原始桌面壳
+
+本仓库最初实现过一个自包含的 Electron 壳（`main.js`、`preload.js`、`shell-update.js`、`shell-log.js`、`server.js`、`updater.js` 等），自带托盘、更新芯片、应用内日志面板与侧栏布局修正。官方桌面已覆盖其中的窗口、托盘与打包能力，日常入口已切到官方桌面，这部分代码保留作参考与备选：
+
+```sh
+npm start                 # 直接跑旧壳（需先按 config.example.json 准备 config.json）
+npm run shortcut          # 旧壳的桌面快捷方式（会覆盖指向官方桌面的快捷方式）
+```
+
+旧壳的更新器与这一层共用 `gitup.js`、`proc.js`，所以两边的 git 判定语义一致。
+
+## 测试
+
+```sh
+node --test
+```
+
+嵌套在上游检出内时，测试会额外校验构建步骤名在官方 `package.json` 中存在；单独检出本仓库时该用例自动跳过。
 
 ## License
 
-本仓库代码 MIT。web 界面与上游功能归 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT, Copyright (c) 2026 DeepSeek）；DeepSeek 徽标归其权利人所有。
+本仓库代码 MIT。官方桌面、web 界面与上游功能归 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT, Copyright (c) 2026 DeepSeek）所有；DeepSeek 徽标归其权利人所有。
